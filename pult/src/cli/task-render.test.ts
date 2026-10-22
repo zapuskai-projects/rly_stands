@@ -62,6 +62,16 @@ describe('renderOutcome', () => {
     assert.ok(broken.some((row) => row.includes('Проверка не состоялась')));
     assert.ok(!broken.some((row) => row.includes('не зачтено')));
   });
+
+  it('сбой проверки моделью не отправляет проверять стенды', () => {
+    const text = renderOutcome(
+      'Т',
+      'abc123',
+      outcome({ unavailable: true, reviewUnavailable: true, message: 'Не удалось посмотреть работу', detail: 'тайм-аут' }),
+    ).map(stripAnsi);
+    assert.ok(text.includes('Не удалось посмотреть работу'));
+    assert.equal(text.at(-1), 'Решение собрано, не ответила проверка на платформе. Запустите ./stand check ещё раз.');
+  });
 });
 
 describe('список задач', () => {

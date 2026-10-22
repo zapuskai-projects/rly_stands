@@ -1,5 +1,12 @@
 import { executor, type ExecutorTable } from './types';
-import { listWorkFiles, MAX_TEXT_CHARS, readWorkText, workSize, writeWorkText } from './work';
+import {
+  bundleWorkFiles,
+  listWorkFiles,
+  MAX_TEXT_CHARS,
+  readWorkText,
+  workSize,
+  writeWorkText,
+} from './work';
 
 export const FILE_EXECUTORS: ExecutorTable = {
   'file.exists': executor<{ path: string }>(async ({ path }, ctx) => {
@@ -8,6 +15,10 @@ export const FILE_EXECUTORS: ExecutorTable = {
   }),
 
   'file.list': executor<{ dir: string }>(async ({ dir }, ctx) => listWorkFiles(ctx, dir)),
+
+  'file.bundle': executor<{ dir: string; maxChars?: number }>(async ({ dir, maxChars }, ctx) =>
+    bundleWorkFiles(ctx, dir, maxChars),
+  ),
 
   'file.content': executor<{ path: string }>(async ({ path }, ctx) => {
     const text = readWorkText(ctx, path);

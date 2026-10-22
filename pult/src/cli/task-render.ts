@@ -64,7 +64,11 @@ export function renderOutcome(title: string, label: string, outcome: CheckOutcom
   if (result.unavailable) {
     lines.push(color.yellow(result.message));
     if (result.detail) lines.push(color.dim(`  ${result.detail}`));
-    lines.push('Проверьте, что стенды запущены (./stand status), и запустите проверку снова.');
+    lines.push(
+      result.reviewUnavailable
+        ? 'Решение собрано, не ответила проверка на платформе. Запустите ./stand check ещё раз.'
+        : 'Проверьте, что стенды запущены (./stand status), и запустите проверку снова.',
+    );
   } else if (result.passed) {
     lines.push(color.green(`Итог: зачтено, ${passed} из ${total}.`));
   } else {

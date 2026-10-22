@@ -73,6 +73,7 @@ export type CheckOutcome = {
     unavailable: boolean;
     message: string;
     detail: string | null;
+    reviewUnavailable?: boolean;
     assertionResults: AssertionOutcome[];
     summary: { passed: number; total: number };
   };

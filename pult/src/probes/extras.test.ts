@@ -20,12 +20,51 @@ before(() => {
   writeFileSync(join(dir, 'tests', '.hidden'), 'z');
   writeFileSync(join(dir, 'tests', 'node_modules', 'pkg', 'index.js'), 'w');
   writeFileSync(join(dir, 'single.txt'), 'file, not a directory');
+  mkdirSync(join(dir, 'py', 'venv', 'lib'), { recursive: true });
+  mkdirSync(join(dir, 'py', '__pycache__'), { recursive: true });
+  writeFileSync(join(dir, 'py', 'test_transfer.py'), 'def test(): ...');
+  writeFileSync(join(dir, 'py', 'venv', 'lib', 'site.py'), 'lib');
+  writeFileSync(join(dir, 'py', '__pycache__', 'test.pyc'), 'cache');
+  writeFileSync(join(dir, 'py', 'package-lock.json'), '{}');
 });
 
 after(() => rmSync(dir, { recursive: true, force: true }));
 
 const ctx = () => ({ workDir: dir, label: 'k7f3qa' });
 const exec = (key: string, params: Record<string, unknown>) => EXECUTORS[key]!(params, ctx());
+
+describe('file.bundle', () => {
+  it('собирает тексты файлов папки с путями, без скрытых и node_modules', async () => {
+    assert.deepEqual(await exec('file.bundle', { dir: 'tests' }), {
+      exists: true,
+      files: [
+        { path: 'a.test.js', text: 'x' },
+        { path: 'unit/b.test.js', text: 'y' },
+      ],
+      omitted: 0,
+    });
+  });
+
+  it('обрезает по общему пределу символов и считает пропущенные', async () => {
+    assert.deepEqual(await exec('file.bundle', { dir: 'tests', maxChars: 1 }), {
+      exists: true,
+      files: [{ path: 'a.test.js', text: 'x' }],
+      omitted: 1,
+    });
+  });
+
+  it('окружение, кэш и lock-файлы не отправляет, считает их пропущенными', async () => {
+    assert.deepEqual(await exec('file.bundle', { dir: 'py' }), {
+      exists: true,
+      files: [{ path: 'test_transfer.py', text: 'def test(): ...' }],
+      omitted: 3,
+    });
+  });
+
+  it('нет папки — exists false', async () => {
+    assert.deepEqual(await exec('file.bundle', { dir: 'nope' }), { exists: false, files: [], omitted: 0 });
+  });
+});
 
 describe('file.list', () => {
   it('считает файлы вместе с вложенными, пропускает скрытые и node_modules, пути относительные', async () => {

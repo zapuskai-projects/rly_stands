@@ -69,3 +69,40 @@ export function listWorkFiles(ctx: ProbeContext, relative: string): { exists: bo
   found.sort();
   return { exists: true, count: found.length, files: found.slice(0, MAX_LISTED_FILES) };
 }
+
+const DEFAULT_BUNDLE_CHARS = 40_000;
+const BUNDLE_SKIPPED_DIRS = new Set(['venv', 'env', '__pycache__', 'target', 'build', 'dist', 'out', 'bin', 'obj', 'reports', 'allure-results', 'allure-report']);
+const BUNDLE_SKIPPED_FILES = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'poetry.lock', 'Pipfile.lock']);
+
+function bundled(path: string): boolean {
+  const parts = path.split('/');
+  const name = parts.at(-1) ?? '';
+  return !BUNDLE_SKIPPED_FILES.has(name) && !parts.slice(0, -1).some((part) => BUNDLE_SKIPPED_DIRS.has(part));
+}
+
+export function bundleWorkFiles(
+  ctx: ProbeContext,
+  relative: string,
+  maxChars = DEFAULT_BUNDLE_CHARS,
+): { exists: boolean; files: Array<{ path: string; text: string }>; omitted: number } {
+  const listed = listWorkFiles(ctx, relative);
+  if (!listed.exists) return { exists: false, files: [], omitted: 0 };
+  const files: Array<{ path: string; text: string }> = [];
+  let left = maxChars;
+  let omitted = 0;
+  for (const path of listed.files) {
+    if (!bundled(path)) {
+      omitted += 1;
+      continue;
+    }
+    const text = readWorkText(ctx, `${relative}/${path}`);
+    if (text === null || text.includes('\u0000') || left <= 0) {
+      omitted += 1;
+      continue;
+    }
+    const part = text.length > left ? text.slice(0, left) : text;
+    files.push({ path, text: part });
+    left -= part.length;
+  }
+  return { exists: true, files, omitted: omitted + (listed.count - listed.files.length) };
+}
