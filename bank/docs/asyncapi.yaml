@@ -1,0 +1,288 @@
+asyncapi: '2.6.0'
+info:
+  title: События ЗапускБанка
+  version: 1.0.0
+  description: |
+    События платежей учебного банка ЗапускБанк. Клиенты, счета и операции вымышленные.
+
+    Все суммы передаются целым числом копеек. Время передаётся московское, со смещением `+03:00`.
+
+    Ключ сообщений Kafka — номер клиента (`clientNumber`), поэтому события одного клиента попадают в одну партицию и читаются в порядке отправки. В заголовках каждого сообщения передаются `operationId` и `requestId`: по ним событие связывается с операцией и с запросом, который её породил.
+
+    События публикуются после фиксации изменений в базе банка. При сбое брокера банк повторяет отправку, поэтому одно и то же событие может прийти повторно: различайте дубликаты по `eventId`.
+defaultContentType: application/json
+servers:
+  kafka:
+    url: localhost:19092
+    protocol: kafka
+    description: Kafka. Внутри сети контейнеров брокер доступен как redpanda:9092.
+  rabbitmq:
+    url: localhost:5672
+    protocol: amqp
+    description: RabbitMQ. Панель управления на порту 15672.
+channels:
+  bank.payments.created:
+    description: Kafka-топик. Публикуется при создании операции, до проверки антифродом.
+    servers: [kafka]
+    bindings:
+      kafka:
+        topic: bank.payments.created
+        partitions: 3
+        replicas: 1
+    subscribe:
+      summary: Операция создана
+      message:
+        $ref: '#/components/messages/PaymentCreated'
+  bank.payments.status-changed:
+    description: |
+      Kafka-топик. Публикуется при каждой смене статуса операции, кроме создания.
+
+      Возврат после тайм-аута СБП не имеет отдельного события: приходит смена статуса `PROCESSING` → `REFUNDED` с `reasonCode` `SBP_TIMEOUT`. Отказ банка получателя и недоступность СБП приходят как `PROCESSING` → `FAILED` с `reasonCode` `SBP_REJECTED` или `SBP_UNAVAILABLE`.
+    servers: [kafka]
+    bindings:
+      kafka:
+        topic: bank.payments.status-changed
+        partitions: 3
+        replicas: 1
+    subscribe:
+      summary: Статус операции изменился
+      message:
+        $ref: '#/components/messages/StatusChanged'
+  bank.antifraud.decisions:
+    description: Kafka-топик. Антифрод публикует решение по каждому переводу по телефону. Банк применяет решение к операции в статусе `CHECKING`.
+    servers: [kafka]
+    bindings:
+      kafka:
+        topic: bank.antifraud.decisions
+        partitions: 3
+        replicas: 1
+    subscribe:
+      summary: Решение антифрода
+      message:
+        $ref: '#/components/messages/AntifraudDecision'
+  bank.notifications:
+    description: |
+      Очередь RabbitMQ. Банк кладёт в неё СМС и пуш строго после перехода операции в статус `COMPLETED`: по два сообщения отправителю и, при переводе внутри банка, по два получателю. Потребитель записывает сообщения в журнал уведомлений.
+
+      Сообщение, которое не удалось обработать, уходит через обменник `bank.notifications.dlx` в очередь `bank.notifications.dlq`.
+    servers: [rabbitmq]
+    bindings:
+      amqp:
+        is: queue
+        queue:
+          name: bank.notifications
+          durable: true
+          autoDelete: false
+          vhost: /
+    subscribe:
+      summary: Уведомление клиенту
+      bindings:
+        amqp:
+          ack: true
+      message:
+        $ref: '#/components/messages/Notification'
+components:
+  messages:
+    PaymentCreated:
+      name: PaymentCreated
+      title: Операция создана
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/MessageHeaders'
+      payload:
+        $ref: '#/components/schemas/PaymentCreated'
+    StatusChanged:
+      name: StatusChanged
+      title: Статус операции изменился
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/MessageHeaders'
+      payload:
+        $ref: '#/components/schemas/StatusChanged'
+      examples:
+        - name: Возврат после тайм-аута СБП
+          payload:
+            eventId: 6d9a6832-8f25-48b7-9ce0-c598b315ba9e
+            operationId: bf3fe1ee-5d07-4cf2-b6ed-ad7953f15918
+            operationNumber: ZB0000100007
+            clientNumber: '10000002'
+            previousStatus: PROCESSING
+            status: REFUNDED
+            reasonCode: SBP_TIMEOUT
+            changedAt: '2026-10-20T16:22:33.499+03:00'
+    AntifraudDecision:
+      name: AntifraudDecision
+      title: Решение антифрода
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/MessageHeaders'
+      payload:
+        $ref: '#/components/schemas/AntifraudDecision'
+    Notification:
+      name: Notification
+      title: Уведомление клиенту
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/MessageHeaders'
+      payload:
+        $ref: '#/components/schemas/Notification'
+  schemas:
+    MessageHeaders:
+      type: object
+      properties:
+        operationId:
+          type: string
+          format: uuid
+          description: Идентификатор операции
+        requestId:
+          type: string
+          description: Сквозной номер запроса, который породил событие
+    PaymentCreated:
+      type: object
+      additionalProperties: false
+      required: [eventId, operationId, operationNumber, clientNumber, type, route, amount, fee, currency, fromAccount, recipientPhone, recipientBankCode, createdAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Уникальный номер события
+        operationId:
+          type: string
+          format: uuid
+        operationNumber:
+          type: string
+          description: Номер операции для обращений, например ZB0000100001
+        clientNumber:
+          type: string
+          description: Номер клиента, он же ключ сообщения
+        type:
+          type: string
+          enum: [OWN_TRANSFER, PHONE_TRANSFER]
+        route:
+          type: string
+          enum: [INTERNAL, SBP]
+        amount:
+          type: integer
+          description: Сумма перевода в копейках
+        fee:
+          type: integer
+          description: Комиссия в копейках
+        currency:
+          type: string
+          const: RUB
+        fromAccount:
+          type: string
+          pattern: '^[0-9]{20}$'
+        recipientPhone:
+          type: [string, 'null']
+        recipientBankCode:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+    StatusChanged:
+      type: object
+      additionalProperties: false
+      required: [eventId, operationId, operationNumber, clientNumber, previousStatus, status, reasonCode, changedAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        operationId:
+          type: string
+          format: uuid
+        operationNumber:
+          type: string
+        clientNumber:
+          type: string
+        previousStatus:
+          $ref: '#/components/schemas/OperationStatus'
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+        reasonCode:
+          type: [string, 'null']
+          description: Причина перехода, например ANTIFRAUD_REVIEW, OPERATOR_REJECTED, REVIEW_EXPIRED, SBP_REJECTED, SBP_UNAVAILABLE, SBP_TIMEOUT
+        changedAt:
+          type: string
+          format: date-time
+    OperationStatus:
+      type: string
+      enum: [CREATED, CHECKING, ON_REVIEW, PROCESSING, COMPLETED, REJECTED, FAILED, REFUNDED]
+    AntifraudDecision:
+      type: object
+      additionalProperties: false
+      required: [eventId, operationId, operationNumber, clientNumber, score, decision, rules, thresholds, decidedAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        operationId:
+          type: string
+          format: uuid
+        operationNumber:
+          type: string
+        clientNumber:
+          type: string
+        score:
+          type: integer
+          minimum: 0
+          description: Сумма очков сработавших правил
+        decision:
+          type: string
+          enum: [APPROVE, REVIEW, REJECT]
+          description: APPROVE — перевод идёт дальше, REVIEW — нужна ручная проверка, REJECT — перевод отклонён
+        rules:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, points]
+            properties:
+              code:
+                type: string
+                enum: [NEW_RECIPIENT, NIGHT_TIME, AMOUNT_ABOVE_USUAL, HIGH_FREQUENCY]
+              points:
+                type: integer
+        thresholds:
+          type: object
+          additionalProperties: false
+          required: [review, reject]
+          properties:
+            review:
+              type: integer
+              description: Порог ручной проверки, по умолчанию 70
+            reject:
+              type: integer
+              description: Порог отказа, по умолчанию 90
+        decidedAt:
+          type: string
+          format: date-time
+    Notification:
+      type: object
+      additionalProperties: false
+      required: [messageId, operationId, clientId, phone, channel, kind, text, createdAt]
+      properties:
+        messageId:
+          type: string
+          format: uuid
+          description: Уникальный номер сообщения, повторная доставка не создаёт вторую запись в журнале
+        operationId:
+          type: string
+          format: uuid
+        clientId:
+          type: string
+          format: uuid
+        phone:
+          type: string
+          pattern: '^\+79[0-9]{9}$'
+        channel:
+          type: string
+          enum: [SMS, PUSH]
+        kind:
+          type: string
+          enum: [TRANSFER_COMPLETED, TRANSFER_RECEIVED]
+        text:
+          type: string
+        createdAt:
+          type: string
+          format: date-time

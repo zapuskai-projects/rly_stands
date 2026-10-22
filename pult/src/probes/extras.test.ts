@@ -1,0 +1,200 @@
+import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, describe, it } from 'node:test';
+import { duplicateKeys, operationFacts } from './bank';
+import { stateFacts } from './diagrams';
+import { describeMessage, fieldPaths, summarizeByKey } from './kafka';
+import { EXECUTORS } from './registry';
+
+let dir = '';
+
+before(() => {
+  dir = mkdtempSync(join(tmpdir(), 'kit-extras-'));
+  mkdirSync(join(dir, 'tests', 'unit'), { recursive: true });
+  mkdirSync(join(dir, 'tests', 'node_modules', 'pkg'), { recursive: true });
+  mkdirSync(join(dir, 'empty'));
+  writeFileSync(join(dir, 'tests', 'a.test.js'), 'x');
+  writeFileSync(join(dir, 'tests', 'unit', 'b.test.js'), 'y');
+  writeFileSync(join(dir, 'tests', '.hidden'), 'z');
+  writeFileSync(join(dir, 'tests', 'node_modules', 'pkg', 'index.js'), 'w');
+  writeFileSync(join(dir, 'single.txt'), 'file, not a directory');
+});
+
+after(() => rmSync(dir, { recursive: true, force: true }));
+
+const ctx = () => ({ workDir: dir, label: 'k7f3qa' });
+const exec = (key: string, params: Record<string, unknown>) => EXECUTORS[key]!(params, ctx());
+
+describe('file.list', () => {
+  it('считает файлы вместе с вложенными, пропускает скрытые и node_modules, пути относительные', async () => {
+    assert.deepEqual(await exec('file.list', { dir: 'tests' }), {
+      exists: true,
+      count: 2,
+      files: ['a.test.js', 'unit/b.test.js'],
+    });
+  });
+
+  it('пустая папка, нет папки и файл вместо папки — ноль файлов', async () => {
+    assert.deepEqual(await exec('file.list', { dir: 'empty' }), { exists: true, count: 0, files: [] });
+    assert.deepEqual(await exec('file.list', { dir: 'nope' }), { exists: false, count: 0, files: [] });
+    assert.deepEqual(await exec('file.list', { dir: 'single.txt' }), { exists: false, count: 0, files: [] });
+  });
+
+  it('выход за пределы work/ — ошибка пути', async () => {
+    await assert.rejects(exec('file.list', { dir: '../etc' }), /выходит за пределы/);
+  });
+});
+
+describe('kit.wait', () => {
+  it('ждёт заданное число секунд', async () => {
+    const started = Date.now();
+    assert.deepEqual(await exec('kit.wait', { seconds: 1 }), { waited: 1 });
+    assert.ok(Date.now() - started >= 950);
+  });
+});
+
+describe('kafka.messages: разбор значения', () => {
+  it('JSON становится объектом, исходный текст сохраняется, поля — пути включая вложенные', () => {
+    const message = describeMessage({
+      partition: 0,
+      offset: 3,
+      key: '10000002',
+      value: '{"eventId":"e1","amount":150050,"client":{"number":"10000002"},"items":[{"sku":"a"}]}',
+      headers: {},
+    });
+    assert.deepEqual(message.value, {
+      eventId: 'e1',
+      amount: 150050,
+      client: { number: '10000002' },
+      items: [{ sku: 'a' }],
+    });
+    assert.equal(message.raw, '{"eventId":"e1","amount":150050,"client":{"number":"10000002"},"items":[{"sku":"a"}]}');
+    assert.deepEqual(message.fields, ['eventId', 'amount', 'client', 'client.number', 'items', 'items[].sku']);
+  });
+
+  it('не JSON остаётся строкой без полей', () => {
+    const message = describeMessage({ key: 'k', value: 'просто текст', headers: {} });
+    assert.equal(message.value, 'просто текст');
+    assert.deepEqual(message.fields, []);
+    assert.deepEqual(fieldPaths('текст'), []);
+    assert.deepEqual(describeMessage({ key: 'k', value: '[1,2]', headers: {} }).fields, []);
+  });
+});
+
+describe('plantuml.state: переходы без конечной точки', () => {
+  it('переходы в [*] не входят в transitionsWithoutFinal, переходы из [*] входят', () => {
+    const facts = stateFacts(`@startuml
+title Статусы
+[*] --> CREATED
+CREATED --> CHECKING
+CHECKING --> COMPLETED
+COMPLETED --> [*]
+@enduml`);
+    assert.deepEqual(
+      facts.transitionsWithoutFinal.map((item) => `${item.from} -> ${item.to}`),
+      ['[*] -> CREATED', 'CREATED -> CHECKING', 'CHECKING -> COMPLETED'],
+    );
+    assert.deepEqual(facts.edges.at(-1), 'COMPLETED -> [*]');
+  });
+});
+
+describe('факты банка', () => {
+  it('ключи повтора, встретившиеся дважды и чаще, — с числом запросов', () => {
+    assert.deepEqual(
+      duplicateKeys([
+        { idempotencyKey: 'a-key-0001' },
+        { idempotencyKey: 'b-key-0002' },
+        { idempotencyKey: 'a-key-0001' },
+        { idempotencyKey: 'a-key-0001' },
+        { idempotencyKey: null },
+        {},
+      ]),
+      [{ key: 'a-key-0001', count: 3 }],
+    );
+    assert.deepEqual(duplicateKeys([{ idempotencyKey: 'x' }]), []);
+  });
+
+  it('у операции есть возраст и признак копеек, даже если банк их не прислал', () => {
+    assert.deepEqual(
+      [operationFacts({ number: 'ZB1' }).ageSeconds, operationFacts({ number: 'ZB1' }).hasKopecks],
+      [0, false],
+    );
+    const facts = operationFacts({ number: 'ZB1', ageSeconds: 45, hasKopecks: true });
+    assert.equal(facts.ageSeconds, 45);
+    assert.equal(facts.hasKopecks, true);
+  });
+});
+
+describe('platform.answer', () => {
+  it('ответ уходит в сдачу попытки одним полем answer', async () => {
+    const saved: Array<Record<string, string>> = [];
+    await EXECUTORS['platform.answer']!(
+      { answer: '40817810000000000001' },
+      { workDir: dir, label: 'k7f3qa', saveReport: async (report) => void saved.push(report) },
+    );
+    assert.deepEqual(saved, [{ answer: '40817810000000000001' }]);
+  });
+
+  it('вне попытки — понятная ошибка', async () => {
+    await assert.rejects(exec('platform.answer', { answer: '1' }), /внутри попытки/);
+  });
+});
+
+describe('kafka.messages: сводка по ключам', () => {
+  const event = (key: string, partition: number, offset: number, at: unknown) => ({
+    key,
+    partition,
+    offset,
+    value: { documentId: key, at },
+  });
+
+  it('по ключу — число сообщений, партиции и порядок по полю значения внутри партиции', () => {
+    const summary = summarizeByKey(
+      [
+        event('doc-1', 2, 0, '2026-10-21T09:00:00Z'),
+        event('doc-2', 0, 0, '2026-10-21T09:00:00Z'),
+        event('doc-1', 2, 1, '2026-10-21T09:05:00Z'),
+        event('doc-1', 2, 2, '2026-10-21T09:10:00Z'),
+      ],
+      'at',
+    );
+    assert.deepEqual(summary, [
+      { key: 'doc-1', count: 3, partitions: [2], orderedBy: { field: 'at', ok: true } },
+      { key: 'doc-2', count: 1, partitions: [0], orderedBy: { field: 'at', ok: true } },
+    ]);
+  });
+
+  it('значение, идущее назад, и разные партиции у одного ключа видны отдельно', () => {
+    const [shuffled] = summarizeByKey(
+      [event('doc-1', 1, 0, '2026-10-21T09:10:00+03:00'), event('doc-1', 1, 1, '2026-10-21T09:05:00+03:00')],
+      'at',
+    );
+    assert.equal(shuffled?.orderedBy.ok, false);
+    const [spread] = summarizeByKey([event('doc-1', 0, 0, '2026-10-21T09:00:00Z'), event('doc-1', 1, 0, '2026-10-21T09:05:00Z')], 'at');
+    assert.deepEqual(spread?.partitions, [0, 1]);
+  });
+
+  it('смещение часового пояса учитывается, а числа и текст сравниваются по своим правилам', () => {
+    const [zone] = summarizeByKey(
+      [event('a', 0, 0, '2026-10-21T10:00:00+03:00'), event('a', 0, 1, '2026-10-21T08:00:00Z')],
+      'at',
+    );
+    assert.equal(zone?.orderedBy.ok, true);
+    const [numbers] = summarizeByKey([event('n', 0, 0, 2), event('n', 0, 1, 10)], 'at');
+    assert.equal(numbers?.orderedBy.ok, true);
+  });
+
+  it('нет поля, не JSON или смесь типов — порядок не подтверждён', () => {
+    assert.equal(summarizeByKey([event('a', 0, 0, undefined)], 'at')[0]?.orderedBy.ok, false);
+    assert.equal(summarizeByKey([{ key: 'a', partition: 0, offset: 0, value: 'текст' }], 'at')[0]?.orderedBy.ok, false);
+    assert.equal(summarizeByKey([event('a', 0, 0, 1), event('a', 0, 1, 'позже')], 'at')[0]?.orderedBy.ok, false);
+  });
+
+  it('другое поле задаётся параметром, пустой список даёт пустую сводку', () => {
+    const [custom] = summarizeByKey([{ key: 'a', partition: 0, offset: 0, value: { seq: 1 } }, { key: 'a', partition: 0, offset: 1, value: { seq: 2 } }], 'seq');
+    assert.deepEqual(custom?.orderedBy, { field: 'seq', ok: true });
+    assert.deepEqual(summarizeByKey([], 'at'), []);
+  });
+});

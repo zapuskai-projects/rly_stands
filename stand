@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+
+KIT_DIR=$(cd "$(dirname "$0")" && pwd)
+VERSION=$(tr -d ' \r\n' < "$KIT_DIR/VERSION")
+IMAGE=${STAND_PULT_IMAGE:-ghcr.io/zapuskai-projects/stands-kit-pult:$VERSION}
+PLATFORM_URL=${STAND_PLATFORM_URL:-https://api.education.zapuskai.com}
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker не найден. Установите Docker Desktop: https://www.docker.com/products/docker-desktop/" >&2
+  exit 1
+fi
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker не запущен. Откройте Docker Desktop, дождитесь статуса Running и повторите команду." >&2
+  exit 1
+fi
+
+docker network inspect stands-kit >/dev/null 2>&1 || docker network create stands-kit >/dev/null
+
+TTY_FLAG=-i
+if [ -t 0 ] && [ -t 1 ]; then TTY_FLAG=-it; fi
+
+exec docker run --rm "$TTY_FLAG" \
+  --network stands-kit \
+  --add-host host.docker.internal:host-gateway \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v stands-kit-data:/data \
+  -v "$KIT_DIR":/kit \
+  -w /kit \
+  -e KIT_HOST_DIR="$KIT_DIR" \
+  -e KIT_VERSION="$VERSION" \
+  -e STAND_PLATFORM_URL="$PLATFORM_URL" \
+  -e STAND_PULT_IMAGE \
+  -e STAND_LINUX_IMAGE \
+  -e STAND_BANK_IMAGE \
+  -e KIT_AGENT_INTERVAL_SEC \
+  -e STAND_MEMORY_TOTAL_MB \
+  "$IMAGE" "$@"

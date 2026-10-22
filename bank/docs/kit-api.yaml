@@ -1,0 +1,736 @@
+openapi: 3.1.0
+info:
+  title: ЗапускБанк, служебный API набора стендов
+  version: 1.0.0
+  description: |
+    Служебный API для пульта набора: подготовка банка к задаче, действия от имени клиентов и операторов, факты для проверок.
+    Он не входит в публичный контракт банка, в документации и интерфейсе не показывается.
+
+    Доступ: заголовок `X-Kit-Secret` должен совпадать с переменной окружения `KIT_SECRET` банка. Без заголовка, с неверным значением и при незаданном `KIT_SECRET` любой путь `/_kit` отвечает 404 `NOT_FOUND`.
+
+    Все суммы — целые копейки. Время — ISO 8601 в банковском (московском) времени со смещением `+03:00`. В запросе время без смещения считается московским.
+    Ошибки — как в публичном API: `{ code, message, requestId, details? }`, 400 `VALIDATION_ERROR` с полями в `details`.
+servers:
+  - url: http://localhost:18400
+security:
+  - kitSecret: []
+paths:
+  /_kit/scenario:
+    post:
+      operationId: kitScenario
+      summary: Подготовить банк к задаче
+      description: |
+        Метка, сбои, режим СБП и время банка применяются целиком или не применяются вовсе. Тарифы и персоны правятся частично: названные поля меняются, остальные остаются. `bankTime` ставит часы банка на это время, дальше они идут от него; `null` возвращает реальное время.
+        Режим `UNAVAILABLE` — СБП недоступна.
+        Персона — клиент по телефону: можно сменить тариф, личный суточный лимит (`null` снимает его) и статус основного счёта (`ARRESTED` — арест, расходные операции отклоняются).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScenarioRequest'
+      responses:
+        '200':
+          description: Сценарий применён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Applied'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /_kit/reset:
+    post:
+      operationId: kitReset
+      summary: Сбросить данные к сиду
+      description: |
+        Удаляет операции, проводки, уведомления, ключи повтора, сеансы, журнал запросов и события на отправку, заново создаёт клиентов, счета и историю как при первом запуске, возвращает тарифы и пороги антифрода по умолчанию, очищает сценарий (метка пуста, сбои выключены, СБП в режиме NORMAL, часы банка идут по реальному времени). Старые токены клиентов и операторов перестают действовать. Номера операций начинаются заново.
+      responses:
+        '200':
+          description: Сброс выполнен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetDone'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /_kit/actions/transfer:
+    post:
+      operationId: kitTransfer
+      summary: Создать перевод от имени клиента
+      description: |
+        Работает как `POST /api/v1/transfers` клиента, но без входа по коду. Счёт списания по умолчанию — основной счёт клиента. Нужен ровно один получатель: `toPhone` (в свой банк или в другой через `toBankCode`) или `toOwnAccount` (между своими счетами). Метка `label` записывается в операцию и в журнал запросов. Повтор с тем же `idempotencyKey` и телом возвращает ту же операцию. Ошибки правил банка приходят теми же кодами, что в публичном API (например, 422 `INSUFFICIENT_FUNDS`); отказ по лимиту создаёт операцию в статусе `REJECTED`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferActionRequest'
+      responses:
+        '200':
+          description: Операция создана или найдена по ключу повтора
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferActionResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /_kit/actions/check-client:
+    post:
+      operationId: kitCheckClient
+      summary: Завести технического клиента для проверок
+      description: |
+        Создаёт клиента «Проверка набора» с отдельным телефоном (`+7900999XXXX`), основным текущим счётом и начальным остатком. Проверки проводят от его имени прогоны переводов (`POST /_kit/actions/transfer` по этому телефону), чтобы не расходовать деньги и не пачкать историю клиентов студента. Операции технического клиента отдают `facts/*`; в списках и поиске операционного офиса (клиенты, операции, журнал уведомлений, очередь ручной проверки) и в справочнике получателей публичного API они не показываются, а счёт не попадает в список несошедшихся счетов `facts/ledger` без `account`. Технических клиентов удаляет `POST /_kit/reset`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckClientRequest'
+      responses:
+        '200':
+          description: Клиент создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckClientResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /_kit/actions/set-tariff:
+    post:
+      operationId: kitSetTariff
+      summary: Изменить настройки тарифа
+      description: Поля как в `tariffs` сценария; названные поля меняются, остальные остаются. Минимальная комиссия не может быть больше максимальной.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TariffPatch'
+      responses:
+        '200':
+          description: Тариф после изменения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TariffFact'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /_kit/actions/review:
+    post:
+      operationId: kitReview
+      summary: Решение оператора по ручной проверке
+      description: Одобрить или отклонить перевод со статусом `ON_REVIEW`, как это делает оператор в офисе. Оператор в журнале — `kit`. Без `comment` отклонение пишет стандартный комментарий.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewActionRequest'
+      responses:
+        '200':
+          description: Проверка завершена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewActionResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /_kit/facts/operations:
+    get:
+      operationId: kitOperations
+      summary: Операции по метке, телефону и статусу
+      description: |
+        `label` — метка операции: из заголовка `X-Attempt-Label` запроса клиента или из `label` действия `transfer`; находятся и операции, которые читались запросом с этой меткой. Без фильтров — все операции (не больше 500), по времени создания.
+        Причина `reasonCode` — код отказа или причина последнего статуса (`DAILY_LIMIT_EXCEEDED`, `SBP_REJECTED`, `SBP_TIMEOUT`).
+      parameters:
+        - name: label
+          in: query
+          schema:
+            type: string
+        - name: phone
+          in: query
+          description: Телефон клиента, плюс в адресе кодируется как `%2B`
+          schema:
+            type: string
+            pattern: '^\+79[0-9]{9}$'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/OperationStatus'
+      responses:
+        '200':
+          description: Операции
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OperationFact'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /_kit/facts/operations/{idOrNumber}:
+    get:
+      operationId: kitOperation
+      summary: Одна операция со всеми подробностями
+      description: |
+        `idOrNumber` — идентификатор или номер вида `ZB0000100001`.
+        `defects` — сбои сценария, сработавшие на этой операции, с подробностями (`expected`, `actual` и контекст); пусто, если ничего не сработало. `postings` — проводки операции (счета по номерам). `antifraud` — решение антифрода или `null`. `notifications` — СМС и пуш по операции; `beforeCompletion` — отправлено до проведения операции или, если операция не проведена, вообще.
+      parameters:
+        - name: idOrNumber
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Операция
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationDetails'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /_kit/facts/ledger:
+    get:
+      operationId: kitLedger
+      summary: Остаток счёта и проводки
+      description: |
+        С `account` — один счёт: остаток, сумма его проводок (кредит минус дебет), сходятся ли они и сумма активных холдов. Без `account` — список счетов, где остаток не равен сумме проводок; счета технических клиентов в нём не показываются.
+      parameters:
+        - name: account
+          in: query
+          description: Номер счёта из 20 цифр
+          schema:
+            type: string
+            pattern: '^[0-9]{20}$'
+      responses:
+        '200':
+          description: Один счёт или список несошедшихся
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/LedgerFact'
+                  - $ref: '#/components/schemas/LedgerInconsistent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /_kit/facts/requests:
+    get:
+      operationId: kitRequests
+      summary: Журнал запросов клиента к API по метке
+      description: Запросы публичного API с заголовком `X-Attempt-Label` и действия `transfer` с этой меткой, по порядку. Не больше 1000 строк. Тело запроса не хранится. Запись журнала делается после ответа; этот метод и `facts/operations` с меткой до секунды ждут ещё не записанные строки с той же меткой.
+      parameters:
+        - name: label
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Запросы
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RequestFact'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /_kit/facts/tariffs/{code}:
+    get:
+      operationId: kitTariff
+      summary: Текущие настройки тарифа
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Тариф
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TariffFact'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    kitSecret:
+      type: apiKey
+      in: header
+      name: X-Kit-Secret
+  responses:
+    BadRequest:
+      description: Тело или параметры не прошли проверку
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Нет такого пути, секрет неверен или не задан, либо нет объекта
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: Правило банка не позволило выполнить запрос
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Проверка уже завершена или её срок истёк
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        requestId:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+    Kopecks:
+      type: integer
+      minimum: 0
+    Phone:
+      type: string
+      pattern: '^\+79[0-9]{9}$'
+    Label:
+      type: string
+      pattern: '^[A-Za-z0-9._:-]{1,64}$'
+    OperationStatus:
+      type: string
+      enum: [CREATED, CHECKING, ON_REVIEW, PROCESSING, COMPLETED, REJECTED, FAILED, REFUNDED]
+    TariffPatch:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+        dailyLimitKop:
+          $ref: '#/components/schemas/Kopecks'
+        freeMonthlyKop:
+          $ref: '#/components/schemas/Kopecks'
+        rateBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        minKop:
+          $ref: '#/components/schemas/Kopecks'
+        maxKop:
+          $ref: '#/components/schemas/Kopecks'
+    PersonaPatch:
+      type: object
+      additionalProperties: false
+      required: [phone]
+      properties:
+        phone:
+          $ref: '#/components/schemas/Phone'
+        tariffCode:
+          type: string
+          enum: [START, PENSION]
+        dailyLimitKop:
+          type: [integer, 'null']
+          minimum: 0
+        accountStatus:
+          type: string
+          enum: [ACTIVE, ARRESTED]
+    ScenarioRequest:
+      type: object
+      additionalProperties: false
+      required: [label, defects, sbpMode, bankTime]
+      properties:
+        label:
+          $ref: '#/components/schemas/Label'
+        defects:
+          type: array
+          description: Коды сбоев из каталога банка; неизвестный код — 400
+          items:
+            type: string
+        sbpMode:
+          type: string
+          enum: [NORMAL, REJECT, TIMEOUT, UNAVAILABLE]
+        bankTime:
+          type: [string, 'null']
+          description: ISO 8601, без смещения — московское время; null — реальное время
+        tariffs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TariffPatch'
+        personas:
+          type: array
+          items:
+            $ref: '#/components/schemas/PersonaPatch'
+    Applied:
+      type: object
+      additionalProperties: false
+      required: [applied]
+      properties:
+        applied:
+          type: boolean
+          const: true
+    ResetDone:
+      type: object
+      additionalProperties: false
+      required: [reset]
+      properties:
+        reset:
+          type: boolean
+          const: true
+    TransferActionRequest:
+      type: object
+      additionalProperties: false
+      required: [phone, amountKop, idempotencyKey, label]
+      properties:
+        phone:
+          $ref: '#/components/schemas/Phone'
+        fromAccount:
+          type: string
+          pattern: '^[0-9]{20}$'
+        toPhone:
+          $ref: '#/components/schemas/Phone'
+        toBankCode:
+          type: string
+        toOwnAccount:
+          type: string
+          pattern: '^[0-9]{20}$'
+        amountKop:
+          type: integer
+          minimum: 1
+        idempotencyKey:
+          type: string
+          pattern: '^[A-Za-z0-9._:-]{8,64}$'
+        label:
+          $ref: '#/components/schemas/Label'
+    CheckClientRequest:
+      type: object
+      additionalProperties: false
+      required: [tariffCode, balanceKop]
+      properties:
+        tariffCode:
+          type: string
+          description: Код существующего тарифа, например `START`
+        balanceKop:
+          type: integer
+          minimum: 0
+          maximum: 10000000000
+          description: Начальный остаток основного счёта в копейках
+    CheckClientResult:
+      type: object
+      additionalProperties: false
+      required: [phone, accountNumber]
+      properties:
+        phone:
+          $ref: '#/components/schemas/Phone'
+        accountNumber:
+          type: string
+          pattern: '^[0-9]{20}$'
+    TransferActionResult:
+      type: object
+      additionalProperties: false
+      required: [operationId, number, status]
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        number:
+          type: string
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+    ReviewActionRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId, decision]
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        decision:
+          type: string
+          enum: [APPROVE, REJECT]
+        comment:
+          type: string
+          minLength: 1
+          maxLength: 500
+    ReviewActionResult:
+      type: object
+      additionalProperties: false
+      required: [operationId, state, status]
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [APPROVED, REJECTED]
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+    TariffFact:
+      type: object
+      additionalProperties: false
+      required: [code, name, dailyLimitKop, freeMonthlyKop, rateBps, minKop, maxKop]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        dailyLimitKop:
+          $ref: '#/components/schemas/Kopecks'
+        freeMonthlyKop:
+          $ref: '#/components/schemas/Kopecks'
+        rateBps:
+          type: integer
+        minKop:
+          $ref: '#/components/schemas/Kopecks'
+        maxKop:
+          $ref: '#/components/schemas/Kopecks'
+    StatusStep:
+      type: object
+      additionalProperties: false
+      required: [status, at, reasonCode]
+      properties:
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+        at:
+          type: string
+        reasonCode:
+          type: [string, 'null']
+    OperationFact:
+      type: object
+      additionalProperties: false
+      required: [id, number, clientPhone, type, route, status, amountKop, feeKop, reasonCode, createdAt, ageSeconds, hasKopecks, statusHistory]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        clientPhone:
+          $ref: '#/components/schemas/Phone'
+        type:
+          type: string
+          enum: [OWN_TRANSFER, PHONE_TRANSFER]
+        route:
+          type: string
+          enum: [INTERNAL, SBP]
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+        amountKop:
+          $ref: '#/components/schemas/Kopecks'
+        feeKop:
+          $ref: '#/components/schemas/Kopecks'
+        reasonCode:
+          type: [string, 'null']
+        createdAt:
+          type: string
+        ageSeconds:
+          type: integer
+          minimum: 0
+          description: Сколько секунд по банковскому времени прошло с создания операции
+        hasKopecks:
+          type: boolean
+          description: Сумма перевода не кратна рублю
+        statusHistory:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusStep'
+    OperationDetails:
+      type: object
+      required: [id, number, clientPhone, type, route, status, amountKop, feeKop, reasonCode, createdAt, ageSeconds, hasKopecks, statusHistory, defects, postings, antifraud, notifications]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        clientPhone:
+          $ref: '#/components/schemas/Phone'
+        type:
+          type: string
+        route:
+          type: string
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+        amountKop:
+          $ref: '#/components/schemas/Kopecks'
+        feeKop:
+          $ref: '#/components/schemas/Kopecks'
+        reasonCode:
+          type: [string, 'null']
+        createdAt:
+          type: string
+        ageSeconds:
+          type: integer
+          minimum: 0
+          description: Сколько секунд по банковскому времени прошло с создания операции
+        hasKopecks:
+          type: boolean
+          description: Сумма перевода не кратна рублю
+        statusHistory:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusStep'
+        defects:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, details]
+            properties:
+              code:
+                type: string
+              details:
+                type: object
+        postings:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [debit, credit, amountKop, kind]
+            properties:
+              debit:
+                type: string
+              credit:
+                type: string
+              amountKop:
+                $ref: '#/components/schemas/Kopecks'
+              kind:
+                type: string
+                enum: [TRANSFER, FEE, OPENING, REFUND]
+        antifraud:
+          type: [object, 'null']
+          additionalProperties: false
+          required: [score, rules]
+          properties:
+            score:
+              type: integer
+            rules:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [code, points]
+                properties:
+                  code:
+                    type: string
+                  points:
+                    type: integer
+        notifications:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [channel, text, createdAt, beforeCompletion]
+            properties:
+              channel:
+                type: string
+                enum: [SMS, PUSH]
+              text:
+                type: string
+              createdAt:
+                type: string
+              beforeCompletion:
+                type: boolean
+    LedgerFact:
+      type: object
+      additionalProperties: false
+      required: [account, balanceKop, postingsSumKop, consistent, holdsKop]
+      properties:
+        account:
+          type: string
+        balanceKop:
+          type: integer
+        postingsSumKop:
+          type: integer
+        consistent:
+          type: boolean
+        holdsKop:
+          $ref: '#/components/schemas/Kopecks'
+    LedgerInconsistent:
+      type: object
+      additionalProperties: false
+      required: [inconsistent]
+      properties:
+        inconsistent:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [account, balanceKop, postingsSumKop]
+            properties:
+              account:
+                type: string
+              balanceKop:
+                type: integer
+              postingsSumKop:
+                type: integer
+    RequestFact:
+      type: object
+      additionalProperties: false
+      required: [method, path, status, responseStatus, errorCode, operationId, replayed, idempotencyKey, at]
+      properties:
+        method:
+          type: string
+        path:
+          type: string
+        status:
+          type: integer
+          description: То же, что responseStatus (оставлено для совместимости)
+        responseStatus:
+          type: integer
+          description: HTTP-код ответа
+        errorCode:
+          type: [string, 'null']
+          description: Код из тела ошибки (`VALIDATION_ERROR`, `INSUFFICIENT_FUNDS` и другие) или причина отказа созданной операции (`DAILY_LIMIT_EXCEEDED`), если она сразу получила статус `REJECTED`; иначе null
+        operationId:
+          type: [string, 'null']
+          format: uuid
+          description: Операция, созданная запросом или найденная повтором по ключу или читаемая запросом; иначе null
+        replayed:
+          type: boolean
+          description: Повтор по ключу идемпотентности, ответ отдан по ранее созданной операции
+        idempotencyKey:
+          type: [string, 'null']
+        at:
+          type: string

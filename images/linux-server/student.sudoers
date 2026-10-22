@@ -1,0 +1,1 @@
+student ALL=(root) NOPASSWD: /usr/bin/supervisorctl, /usr/sbin/nginx, /usr/bin/chown app\:app /var/uploads, /usr/bin/chmod 775 /var/uploads, /opt/scenarios/*/apply.sh *

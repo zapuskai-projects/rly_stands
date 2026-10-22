@@ -1,0 +1,61 @@
+name: zapusk-bank-dev
+
+networks:
+  default:
+    name: ${BANK_NETWORK:-stands-kit}
+    external: true
+
+services:
+  bank-core:
+    build:
+      context: .
+    image: stands-kit-bank:dev
+    container_name: zapusk-bank-core
+    environment:
+      BANK_ROLE: core
+      BANK_DATABASE_URL: ${BANK_DATABASE_URL:-postgres://student:student@postgres:5432/bank}
+      BANK_KAFKA_BROKERS: ${BANK_KAFKA_BROKERS:-redpanda:9092}
+      BANK_RABBITMQ_URL: ${BANK_RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      PORT: "18400"
+      SBP_URL: http://bank-sbp:18402
+      SBP_TIMEOUT_MS: "10000"
+      KIT_SECRET: ${KIT_SECRET:-dev-kit-secret}
+    ports:
+      - "127.0.0.1:18400:18400"
+    restart: unless-stopped
+
+  bank-antifraud:
+    image: stands-kit-bank:dev
+    container_name: zapusk-bank-antifraud
+    environment:
+      BANK_ROLE: antifraud
+      BANK_DATABASE_URL: ${BANK_DATABASE_URL:-postgres://student:student@postgres:5432/bank}
+      BANK_KAFKA_BROKERS: ${BANK_KAFKA_BROKERS:-redpanda:9092}
+      PORT: "18401"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:18401/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    depends_on:
+      bank-core:
+        condition: service_started
+    restart: unless-stopped
+
+  bank-sbp:
+    image: stands-kit-bank:dev
+    container_name: zapusk-bank-sbp
+    environment:
+      BANK_ROLE: sbp
+      BANK_DATABASE_URL: ${BANK_DATABASE_URL:-postgres://student:student@postgres:5432/bank}
+      PORT: "18402"
+      SBP_MIN_DELAY_MS: "1000"
+      SBP_MAX_DELAY_MS: "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:18402/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped

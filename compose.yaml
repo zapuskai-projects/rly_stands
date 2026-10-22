@@ -1,0 +1,354 @@
+name: stands-kit
+
+networks:
+  default:
+    name: stands-kit
+    external: true
+
+volumes:
+  stands-kit-data:
+    external: true
+  rabbitmq-data:
+    name: stands-kit-rabbitmq-data
+    labels:
+      stands.kit.module: rabbitmq
+  redpanda-data:
+    name: stands-kit-redpanda-data
+    labels:
+      stands.kit.module: kafka
+  elasticsearch-data:
+    name: stands-kit-elasticsearch-data
+    labels:
+      stands.kit.module: elasticsearch
+  postgres-data:
+    name: stands-kit-postgres-data
+    labels:
+      stands.kit.module: postgres
+  clickhouse-data:
+    name: stands-kit-clickhouse-data
+    labels:
+      stands.kit.module: clickhouse
+  prometheus-data:
+    name: stands-kit-prometheus-data
+    labels:
+      stands.kit.module: monitoring
+  grafana-data:
+    name: stands-kit-grafana-data
+    labels:
+      stands.kit.module: monitoring
+
+configs:
+  prometheus-config:
+    content: |
+      global:
+        scrape_interval: 5s
+        evaluation_interval: 5s
+      scrape_configs:
+        - job_name: demo-app
+          static_configs:
+            - targets: ['demo-app:8200']
+  grafana-datasource:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          uid: prometheus
+          type: prometheus
+          access: proxy
+          url: http://prometheus:9090
+          isDefault: true
+
+services:
+  kit-agent:
+    image: ${STAND_PULT_IMAGE:-ghcr.io/zapuskai-projects/stands-kit-pult:${KIT_VERSION:?запускайте набор командой ./stand}}
+    container_name: stands-kit-agent
+    command: ["agent"]
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      KIT_VERSION: ${KIT_VERSION}
+      KIT_AGENT_INTERVAL_SEC: ${KIT_AGENT_INTERVAL_SEC:-600}
+      STAND_PLATFORM_URL: ${STAND_PLATFORM_URL:-https://api.education.zapuskai.com}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - stands-kit-data:/data
+
+  rabbitmq:
+    profiles: [rabbitmq]
+    image: rabbitmq:3.13-management-alpine
+    container_name: stands-kit-rabbitmq
+    labels:
+      stands.kit.module: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit loopback_users [] -rabbit collect_statistics_interval 1000"
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+  redpanda:
+    profiles: [kafka]
+    image: redpandadata/redpanda:v24.2.4
+    container_name: stands-kit-redpanda
+    labels:
+      stands.kit.module: kafka
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode dev-container
+      - --smp 1
+      - --memory 768M
+      - --default-log-level=warn
+    ports:
+      - "127.0.0.1:19092:19092"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+
+  akhq:
+    profiles: [kafka]
+    image: tchiotludo/akhq:0.25.0
+    container_name: stands-kit-akhq
+    labels:
+      stands.kit.module: kafka
+    depends_on:
+      - redpanda
+    environment:
+      JAVA_OPTS: -Xmx256m
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            kit:
+              properties:
+                bootstrap.servers: "redpanda:9092"
+    ports:
+      - "127.0.0.1:18080:8080"
+
+  operaton:
+    profiles: [camunda]
+    image: operaton/operaton:2.1.5
+    container_name: stands-kit-operaton
+    labels:
+      stands.kit.module: camunda
+    environment:
+      JAVA_OPTS: -Xms128m -Xmx512m
+      SPRING_APPLICATION_JSON: '{"operaton.bpm.generic-properties.properties.history-time-to-live":"P30D"}'
+    ports:
+      - "127.0.0.1:18090:8080"
+
+  elasticsearch:
+    profiles: [elasticsearch]
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    container_name: stands-kit-elasticsearch
+    labels:
+      stands.kit.module: elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+
+  kibana:
+    profiles: [elasticsearch]
+    image: docker.elastic.co/kibana/kibana:8.15.3
+    container_name: stands-kit-kibana
+    labels:
+      stands.kit.module: elasticsearch
+    depends_on:
+      - elasticsearch
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      XPACK_SECURITY_ENABLED: "false"
+      NODE_OPTIONS: --max-old-space-size=512
+    ports:
+      - "127.0.0.1:5601:5601"
+
+  postgres:
+    profiles: [postgres]
+    image: postgres:16.15
+    container_name: stands-kit-postgres
+    labels:
+      stands.kit.module: postgres
+    environment:
+      POSTGRES_USER: student
+      POSTGRES_PASSWORD: student
+      POSTGRES_DB: student
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  plantuml:
+    profiles: [contracts]
+    image: plantuml/plantuml-server:jetty-v1.2026.9
+    container_name: stands-kit-plantuml
+    labels:
+      stands.kit.module: contracts
+    ports:
+      - "127.0.0.1:18100:8080"
+
+  prism:
+    profiles: [contracts]
+    image: stoplight/prism:5.15.10
+    platform: linux/amd64
+    container_name: stands-kit-prism
+    labels:
+      stands.kit.module: contracts
+    entrypoint: ["sh", "-c", "until [ -f /work/openapi.yaml ]; do sleep 2; done; exec node /usr/src/prism/packages/cli/dist/index.js mock -h 0.0.0.0 -p 4010 --no-multiprocess /work/openapi.yaml"]
+    ports:
+      - "127.0.0.1:18110:4010"
+    volumes:
+      - ${KIT_HOST_DIR:?запускайте набор командой ./stand}/work:/work:ro
+
+  clickhouse:
+    profiles: [clickhouse]
+    image: clickhouse/clickhouse-server:24.8.14.39
+    container_name: stands-kit-clickhouse
+    labels:
+      stands.kit.module: clickhouse
+    environment:
+      CLICKHOUSE_DB: student
+      CLICKHOUSE_USER: student
+      CLICKHOUSE_PASSWORD: student
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    ports:
+      - "127.0.0.1:18123:8123"
+      - "127.0.0.1:19000:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+
+  prometheus:
+    profiles: [monitoring]
+    image: prom/prometheus:v3.15.0
+    container_name: stands-kit-prometheus
+    labels:
+      stands.kit.module: monitoring
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+      - --web.enable-lifecycle
+    configs:
+      - source: prometheus-config
+        target: /etc/prometheus/prometheus.yml
+    ports:
+      - "127.0.0.1:19090:9090"
+    volumes:
+      - prometheus-data:/prometheus
+
+  grafana:
+    profiles: [monitoring]
+    image: grafana/grafana-oss:12.4.3
+    container_name: stands-kit-grafana
+    labels:
+      stands.kit.module: monitoring
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    configs:
+      - source: grafana-datasource
+        target: /etc/grafana/provisioning/datasources/prometheus.yaml
+    ports:
+      - "127.0.0.1:13000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+
+  demo-app:
+    profiles: [monitoring]
+    image: ${STAND_PULT_IMAGE:-ghcr.io/zapuskai-projects/stands-kit-pult:${KIT_VERSION:?запускайте набор командой ./stand}}
+    container_name: stands-kit-demo-app
+    labels:
+      stands.kit.module: monitoring
+    command: ["demo-app"]
+    environment:
+      PORT: "8200"
+    ports:
+      - "127.0.0.1:18200:8200"
+
+  linux-server:
+    profiles: [linux]
+    image: ${STAND_LINUX_IMAGE:-ghcr.io/zapuskai-projects/stands-kit-linux:${KIT_VERSION:?запускайте набор командой ./stand}}
+    container_name: stands-kit-linux-server
+    hostname: kit-server
+    labels:
+      stands.kit.module: linux
+    tmpfs:
+      - /var/log/app:size=32m,mode=2775,uid=2001,gid=2002
+    ports:
+      - "127.0.0.1:12222:22"
+      - "127.0.0.1:18300:80"
+
+  kit-bank-core:
+    profiles: [bank]
+    image: ${STAND_BANK_IMAGE:-ghcr.io/zapuskai-projects/stands-kit-bank:${KIT_VERSION:?запускайте набор командой ./stand}}
+    container_name: stands-kit-bank-core
+    labels:
+      stands.kit.module: bank
+    environment:
+      BANK_ROLE: core
+      PORT: "18400"
+      BANK_DATABASE_URL: ${BANK_DATABASE_URL:-postgres://student:student@postgres:5432/bank}
+      BANK_KAFKA_BROKERS: ${BANK_KAFKA_BROKERS:-redpanda:9092}
+      BANK_RABBITMQ_URL: ${BANK_RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672}
+      SBP_URL: http://kit-bank-sbp:18402
+      SBP_TIMEOUT_MS: "10000"
+      KIT_SECRET: ${KIT_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_started
+        required: false
+      redpanda:
+        condition: service_started
+        required: false
+      rabbitmq:
+        condition: service_started
+        required: false
+    ports:
+      - "127.0.0.1:18400:18400"
+
+  kit-bank-antifraud:
+    profiles: [bank]
+    image: ${STAND_BANK_IMAGE:-ghcr.io/zapuskai-projects/stands-kit-bank:${KIT_VERSION:?запускайте набор командой ./stand}}
+    container_name: stands-kit-bank-antifraud
+    labels:
+      stands.kit.module: bank
+    environment:
+      BANK_ROLE: antifraud
+      PORT: "18401"
+      BANK_DATABASE_URL: ${BANK_DATABASE_URL:-postgres://student:student@postgres:5432/bank}
+      BANK_KAFKA_BROKERS: ${BANK_KAFKA_BROKERS:-redpanda:9092}
+    depends_on:
+      kit-bank-core:
+        condition: service_started
+
+  kit-bank-sbp:
+    profiles: [bank]
+    image: ${STAND_BANK_IMAGE:-ghcr.io/zapuskai-projects/stands-kit-bank:${KIT_VERSION:?запускайте набор командой ./stand}}
+    container_name: stands-kit-bank-sbp
+    labels:
+      stands.kit.module: bank
+    environment:
+      BANK_ROLE: sbp
+      PORT: "18402"
+      BANK_DATABASE_URL: ${BANK_DATABASE_URL:-postgres://student:student@postgres:5432/bank}
+      SBP_MIN_DELAY_MS: "1000"
+      SBP_MAX_DELAY_MS: "3000"

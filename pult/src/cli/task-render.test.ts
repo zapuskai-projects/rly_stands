@@ -1,0 +1,91 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import type { CheckOutcome, SessionTask } from '../platform/types';
+import { stripAnsi } from '../util/out';
+import { findTask, renderCondition, renderOutcome, renderTaskRows } from './task-render';
+
+function task(id: string, title: string, overrides: Partial<SessionTask> = {}): SessionTask {
+  return {
+    id,
+    title,
+    modules: [{ key: 'kit-rabbitmq', title: 'RabbitMQ' }],
+    status: 'NOT_STARTED',
+    attemptId: null,
+    label: null,
+    needsUpdate: false,
+    missingPrimitives: [],
+    verifiedOnStand: null,
+    verifiedFailureOnStand: null,
+    ...overrides,
+  };
+}
+
+const outcome = (overrides: Partial<CheckOutcome['result']> = {}): CheckOutcome => ({
+  attemptId: 'a1',
+  status: 'FAILED',
+  result: {
+    passed: false,
+    unavailable: false,
+    message: 'Не зачтено: 3 из 4',
+    detail: null,
+    summary: { passed: 3, total: 4 },
+    assertionResults: [
+      { id: 'a1', title: 'Обменник k7f3qa.docs типа topic', passed: true, unavailable: false, hint: null, detail: null },
+      { id: 'a2', title: 'Отклонённый документ попал в dead-letter', passed: false, unavailable: false, hint: 'у очереди нет аргумента x-dead-letter-exchange', detail: null },
+    ],
+    ...overrides,
+  },
+});
+
+describe('renderOutcome', () => {
+  it('печатает пункты, подсказку к невыполненному и итог', () => {
+    const text = renderOutcome('Очередь согласования', 'k7f3qa', outcome()).map(stripAnsi);
+    assert.deepEqual(text, [
+      'Очередь согласования · метка k7f3qa',
+      '✓ Обменник k7f3qa.docs типа topic',
+      '✗ Отклонённый документ попал в dead-letter',
+      '  Подсказка: у очереди нет аргумента x-dead-letter-exchange',
+      '',
+      'Итог: не зачтено, 3 из 4. Исправьте и запустите проверку снова.',
+    ]);
+  });
+
+  it('зачёт и «проверка не состоялась» различаются', () => {
+    const passed = renderOutcome('Т', 'abc123', outcome({ passed: true, summary: { passed: 4, total: 4 }, assertionResults: [] })).map(stripAnsi);
+    assert.equal(passed.at(-1), 'Итог: зачтено, 4 из 4.');
+    const broken = renderOutcome(
+      'Т',
+      'abc123',
+      outcome({ unavailable: true, message: 'Проверка не состоялась: пульт не смог собрать факты', detail: 'RabbitMQ не отвечает', assertionResults: [{ id: 'a1', title: 'Обменник', passed: false, unavailable: true, hint: null, detail: 'RabbitMQ не отвечает' }] }),
+    ).map(stripAnsi);
+    assert.ok(broken.includes('? Обменник'));
+    assert.ok(broken.some((row) => row.includes('Проверка не состоялась')));
+    assert.ok(!broken.some((row) => row.includes('не зачтено')));
+  });
+});
+
+describe('список задач', () => {
+  const tasks = [task('lab-aaa', 'Очередь согласования'), task('lab-bbb', 'Процесс договора', { status: 'FAILED' }), task('lab-ccc', 'Старая', { needsUpdate: true })];
+
+  it('строки со статусами и номером', () => {
+    const rows = renderTaskRows(tasks, 1).map(stripAnsi);
+    assert.match(rows[0] ?? '', /1\s+Очередь согласования\s+RabbitMQ\s+не начата/);
+    assert.match(rows[1] ?? '', /▸ 2\s+Процесс договора\s+RabbitMQ\s+не зачтена/);
+    assert.match(rows[2] ?? '', /обновите набор/);
+  });
+
+  it('выбор по номеру, идентификатору и однозначной части названия', () => {
+    assert.equal(findTask(tasks, '2')?.id, 'lab-bbb');
+    assert.equal(findTask(tasks, 'lab-ccc')?.id, 'lab-ccc');
+    assert.equal(findTask(tasks, 'договора')?.id, 'lab-bbb');
+    assert.equal(findTask(tasks, 'а'), undefined);
+    assert.equal(findTask(tasks, '9'), undefined);
+  });
+});
+
+describe('renderCondition', () => {
+  it('убирает разметку жирного и сохраняет остальные строки', () => {
+    const rows = renderCondition('**Что сделать:** настроить маршрут\n\n1. Создайте обменник `abc123.docs`').map(stripAnsi);
+    assert.deepEqual(rows, ['Что сделать: настроить маршрут', '', '1. Создайте обменник `abc123.docs`']);
+  });
+});

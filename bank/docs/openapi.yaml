@@ -1,0 +1,2093 @@
+openapi: 3.1.0
+info:
+  title: ЗапускБанк API
+  version: 1.0.0
+  description: |
+    Программный интерфейс учебного банка ЗапускБанк платформы «Запускай». Клиенты, счета и операции вымышленные.
+
+    Все суммы передаются целым числом копеек: `150000` означает 1 500 рублей 00 копеек. Валюта операций — рубли.
+
+    Время банка — московское, в ответах оно приходит со смещением `+03:00`. Текущее время банка возвращается в заголовке `X-Bank-Time` каждого ответа. Лимиты считаются по московским суткам и календарному месяцу.
+
+    Вход: `POST /api/v1/auth/login` отправляет код на телефон клиента, `POST /api/v1/auth/verify` меняет код на токен. Токен передаётся заголовком `Authorization: Bearer <токен>`. Код входа приходит СМС-сообщением, прочитать его в учебном контуре можно запросом `GET /api/v1/sandbox/sms`.
+
+    Создание перевода требует заголовок `Idempotency-Key`. Повторный запрос с тем же ключом и тем же телом возвращает ту же операцию, с другим телом — ошибку.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+tags:
+  - name: Вход
+  - name: Профиль
+  - name: Счета
+  - name: Переводы
+  - name: Операции
+  - name: Операторский офис
+  - name: Справочники
+  - name: Учебный контур
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [Вход]
+      operationId: requestLoginCode
+      summary: Запросить код входа
+      description: Отправляет шестизначный код СМС на телефон клиента. Код действует 5 минут, на ввод даётся 5 попыток. Новый запрос отменяет предыдущий код.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              phone: '+79001110001'
+      responses:
+        '202':
+          description: Код отправлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginChallenge'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/auth/verify:
+    post:
+      tags: [Вход]
+      operationId: verifyLoginCode
+      summary: Подтвердить код и получить токен
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+      responses:
+        '200':
+          description: Токен выдан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/auth/logout:
+    post:
+      tags: [Вход]
+      operationId: logout
+      summary: Завершить сеанс
+      description: Токен перестаёт действовать сразу.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '204':
+          description: Сеанс завершён
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/me:
+    get:
+      tags: [Профиль]
+      operationId: getProfile
+      summary: Профиль клиента, тариф и использование лимитов
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Профиль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/accounts:
+    get:
+      tags: [Счета]
+      operationId: listAccounts
+      summary: Счета клиента с картами
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Список счетов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/accounts/{accountId}:
+    get:
+      tags: [Счета]
+      operationId: getAccount
+      summary: Один счёт клиента
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Счёт
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/accounts/{accountId}/statement:
+    get:
+      tags: [Счета]
+      operationId: getStatement
+      summary: Выписка по счёту за период
+      description: Проводки счёта за период по московским датам, обе границы включительно. Без параметров — с начала текущего месяца по сегодня. Остаток на начало и на конец считаются по проводкам.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - name: from
+          in: query
+          required: false
+          description: Первый день периода
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          description: Последний день периода
+          schema:
+            type: string
+            format: date
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Выписка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Statement'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/transfers:
+    post:
+      tags: [Переводы]
+      operationId: createTransfer
+      summary: Создать перевод
+      description: |
+        Два вида перевода: между своими счетами (`OWN_TRANSFER`) и по номеру телефона (`PHONE_TRANSFER`). Перевод по телефону уходит клиенту ЗапускБанка, а при указании `recipientBankCode` другого банка — в другой банк.
+
+        Перевод между своими счетами проходит без комиссии и лимитов. Перевод по телефону подчиняется суточному лимиту тарифа клиента. Комиссия берётся только с переводов в другой банк: бесплатный месячный объём считается по ним, сверх него — процент тарифа с минимумом и максимумом. Переводы внутри ЗапускБанка комиссии не облагаются.
+
+        Отказ по правилам банка (лимит, арест счёта, запрет для нерезидента) создаёт операцию со статусом `REJECTED` и причиной в поле `rejection`. Ошибки данных (нет получателя, не хватает средств) возвращаются ответом 422 без операции.
+
+        Перевод между своими счетами проводится сразу. Перевод по телефону обрабатывается асинхронно: ответ приходит со статусом `CHECKING`, затем операция проходит проверку антифродом и, если нужно, ручную проверку (`ON_REVIEW`, срок 30 минут), после чего становится `PROCESSING` и заканчивается статусом `COMPLETED`. Перевод в другой банк после `PROCESSING` ждёт ответа системы быстрых платежей и может завершиться статусами `FAILED` (банк получателя отказал или система недоступна) и `REFUNDED` (система не ответила, деньги возвращены). Итоговый статус смотрите запросом `GET /api/v1/operations/{operationId}`.
+
+        Средства на время проверки и обработки удерживаются на счёте: остаток `balance` не меняется, `available` уменьшается на сумму перевода и комиссии.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+            examples:
+              byPhone:
+                summary: Перевод по телефону
+                value:
+                  type: PHONE_TRANSFER
+                  fromAccount: '40817810800000001000'
+                  recipientPhone: '+79001110002'
+                  amount: 150000
+                  comment: За обед
+              ownAccounts:
+                summary: Между своими счетами
+                value:
+                  type: OWN_TRANSFER
+                  fromAccount: '40817810800000001000'
+                  toAccount: '40817810100000001001'
+                  amount: 500000
+      responses:
+        '201':
+          description: Операция создана
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        '200':
+          description: Повтор запроса с тем же ключом и телом, возвращена ранее созданная операция
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotent-Replayed:
+              description: Всегда `true`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/operations:
+    get:
+      tags: [Операции]
+      operationId: listOperations
+      summary: История операций клиента
+      description: Операции от новых к старым. Даты фильтра — московские, обе границы включительно.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/OperationStatus'
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/OperationType'
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: number
+          in: query
+          required: false
+          description: Номер операции целиком
+          schema:
+            type: string
+            maxLength: 32
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы, по умолчанию 20
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          description: Сколько операций пропустить, по умолчанию 0
+          schema:
+            type: integer
+            minimum: 0
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Страница операций
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/operations/{operationId}:
+    get:
+      tags: [Операции]
+      operationId: getOperation
+      summary: Операция с историей статусов
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Операция
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/banks:
+    get:
+      tags: [Справочники]
+      operationId: listBanks
+      summary: Банки, в которые доступны переводы по телефону
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Список банков
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BankList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/sandbox/sms:
+    get:
+      tags: [Учебный контур]
+      operationId: listSandboxSms
+      summary: СМС, отправленные на телефон
+      description: Эмулятор телефона учебного контура. Показывает СМС с кодом входа и другие сообщения банка, новые первыми. Вход не требуется.
+      security: []
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Phone'
+        - name: limit
+          in: query
+          required: false
+          description: Сколько сообщений вернуть, по умолчанию 10
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Сообщения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SmsList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/reviews:
+    get:
+      tags: [Операторский офис]
+      operationId: listOfficeReviews
+      summary: Очередь ручной проверки
+      description: Переводы, которые антифрод отправил на ручную проверку, ближайший срок первым. Нужен токен оператора из `POST /api/v1/office/auth/login`.
+      security:
+        - operatorAuth: []
+      parameters:
+        - name: state
+          in: query
+          required: false
+          description: Состояние проверки. Без параметра возвращаются все.
+          schema:
+            $ref: '#/components/schemas/ReviewState'
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы, по умолчанию 20
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          description: Сколько проверок пропустить, по умолчанию 0
+          schema:
+            type: integer
+            minimum: 0
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Страница очереди
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/reviews/{operationId}/approve:
+    post:
+      tags: [Операторский офис]
+      operationId: approveReview
+      summary: Одобрить перевод
+      description: Операция выходит из `ON_REVIEW` в `PROCESSING` и дальше идёт обычным путём. Одобрить можно только проверку в состоянии `PENDING` до истечения срока; после срока перевод отклоняется автоматически, средства размораживаются.
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OperationIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveReviewRequest'
+      responses:
+        '200':
+          description: Проверка завершена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/reviews/{operationId}/reject:
+    post:
+      tags: [Операторский офис]
+      operationId: rejectReview
+      summary: Отклонить перевод и разморозить средства
+      description: Операция получает статус `REJECTED` с причиной `OPERATOR_REJECTED`, комментарий оператора сохраняется в истории статусов, удержание снимается.
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OperationIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectReviewRequest'
+      responses:
+        '200':
+          description: Проверка завершена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/recipients/lookup:
+    get:
+      tags: [Переводы]
+      operationId: lookupRecipient
+      summary: Кто получатель перевода по телефону
+      description: Возвращает сокращённое имя получателя и признак нового получателя для этого клиента. Для другого банка имя отдаёт учебная СБП, если номер в её справочнике.
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Phone'
+        - name: bankCode
+          in: query
+          required: false
+          description: Код банка получателя, по умолчанию ЗапускБанк
+          schema:
+            type: string
+            pattern: '^[A-Z0-9_]{2,20}$'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Получатель
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipientLookup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/auth/login:
+    post:
+      tags: [Операторский офис]
+      operationId: loginOperator
+      summary: Вход оператора
+      description: Учебные учётные записи оператора перечислены в документе «Тестовый контур».
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperatorLoginRequest'
+      responses:
+        '200':
+          description: Токен оператора
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorToken'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/auth/logout:
+    post:
+      tags: [Операторский офис]
+      operationId: logoutOperator
+      summary: Выход оператора
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '204':
+          description: Сеанс завершён
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/me:
+    get:
+      tags: [Операторский офис]
+      operationId: getOperatorProfile
+      summary: Текущий оператор
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Оператор
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operator'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/reviews/{operationId}:
+    get:
+      tags: [Операторский офис]
+      operationId: getOfficeReview
+      summary: Карточка ручной проверки
+      description: Проверка вместе с клиентом, пороги антифрода и последние операции клиента.
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OperationIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Карточка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewDetails'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/clients:
+    get:
+      tags: [Операторский офис]
+      operationId: listOfficeClients
+      summary: Клиенты банка
+      description: Поиск по имени, телефону или номеру клиента.
+      security:
+        - operatorAuth: []
+      parameters:
+        - name: query
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 64
+        - $ref: '#/components/parameters/PageLimit'
+        - $ref: '#/components/parameters/PageOffset'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Страница клиентов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficeClientPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/clients/{clientId}:
+    get:
+      tags: [Операторский офис]
+      operationId: getOfficeClient
+      summary: Карточка клиента
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClientIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Карточка клиента
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficeClientDetails'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/clients/{clientId}/daily-limit:
+    put:
+      tags: [Операторский офис]
+      operationId: setClientDailyLimit
+      summary: Личный суточный лимит переводов по телефону
+      description: Заменяет лимит тарифа для одного клиента. Значение `null` возвращает лимит тарифа. Доступно старшему оператору.
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClientIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DailyLimitUpdate'
+      responses:
+        '200':
+          description: Карточка клиента с новым лимитом
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficeClientDetails'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/operations:
+    get:
+      tags: [Операторский офис]
+      operationId: listOfficeOperations
+      summary: Операции всех клиентов
+      description: Поиск по номеру операции целиком, по номеру клиента, статусу и виду. Новые первыми.
+      security:
+        - operatorAuth: []
+      parameters:
+        - name: number
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 32
+        - name: clientNumber
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 16
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/OperationStatus'
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/OperationType'
+        - $ref: '#/components/parameters/PageLimit'
+        - $ref: '#/components/parameters/PageOffset'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Страница операций
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficeOperationPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/operations/{operationId}:
+    get:
+      tags: [Операторский офис]
+      operationId: getOfficeOperation
+      summary: Операция с оценкой антифрода и проверкой
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/OperationIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Операция
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficeOperation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/tariffs:
+    get:
+      tags: [Операторский офис]
+      operationId: listTariffs
+      summary: Тарифы
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Тарифы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TariffList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/tariffs/{code}:
+    put:
+      tags: [Операторский офис]
+      operationId: updateTariff
+      summary: Изменить тариф
+      description: Новые значения действуют для следующих переводов. Доступно старшему оператору.
+      security:
+        - operatorAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Z0-9_]{2,20}$'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TariffUpdate'
+      responses:
+        '200':
+          description: Тариф
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tariff'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/notifications:
+    get:
+      tags: [Операторский офис]
+      operationId: listOfficeNotifications
+      summary: Журнал уведомлений
+      description: СМС и пуш всех клиентов, включая коды входа. Новые первыми.
+      security:
+        - operatorAuth: []
+      parameters:
+        - name: phone
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Phone'
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [LOGIN_CODE, TRANSFER_COMPLETED, TRANSFER_RECEIVED]
+        - name: channel
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [SMS, PUSH]
+        - $ref: '#/components/parameters/PageLimit'
+        - $ref: '#/components/parameters/PageOffset'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Страница журнала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficeNotificationPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /health:
+    get:
+      tags: [Справочники]
+      operationId: getHealth
+      summary: Состояние сервиса
+      security: []
+      responses:
+        '200':
+          description: Сервис работает
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: База данных недоступна или обработчики событий ещё подключаются
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Токен клиента из `POST /api/v1/auth/verify`
+    operatorAuth:
+      type: http
+      scheme: bearer
+      description: Токен оператора из `POST /api/v1/office/auth/login`
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Сквозной номер запроса. Если не передан, банк назначит свой и вернёт его в заголовке ответа.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._:-]{8,64}$'
+    AttemptLabel:
+      name: X-Attempt-Label
+      in: header
+      required: false
+      description: Метка попытки. Записывается в журнал запросов банка.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._:-]{1,64}$'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Уникальный ключ запроса, например UUID. Одинаковые ключи с одинаковым телом дают одну операцию.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._:-]{8,128}$'
+    ClientIdPath:
+      name: clientId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      description: Размер страницы, по умолчанию 20
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+    PageOffset:
+      name: offset
+      in: query
+      required: false
+      description: Сколько записей пропустить, по умолчанию 0
+      schema:
+        type: integer
+        minimum: 0
+    OperationIdPath:
+      name: operationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  headers:
+    XRequestId:
+      description: Сквозной номер запроса
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Запрос не прошёл проверку формата
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Нет действительного токена или код входа неверен
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Действие недоступно клиенту
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Объект не найден
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: Запрос корректен по формату, но выполнить его нельзя
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Состояние объекта не позволяет выполнить действие
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: Внутренняя ошибка банка
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Phone:
+      type: string
+      pattern: '^\+79[0-9]{9}$'
+      description: Мобильный телефон в формате +79XXXXXXXXX
+      examples: ['+79001110001']
+    AccountNumber:
+      type: string
+      pattern: '^[0-9]{20}$'
+      description: Номер счёта, 20 цифр
+    Money:
+      type: integer
+      minimum: 0
+      maximum: 1000000000000
+      description: Сумма в копейках
+    Timestamp:
+      type: string
+      format: date-time
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+          description: Машиночитаемый код ошибки
+        message:
+          type: string
+        requestId:
+          type: string
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [phone]
+      properties:
+        phone:
+          $ref: '#/components/schemas/Phone'
+    LoginChallenge:
+      type: object
+      additionalProperties: false
+      required: [challengeId, expiresInSec]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        expiresInSec:
+          type: integer
+    VerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeId, code]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+    ClientSummary:
+      type: object
+      additionalProperties: false
+      required: [id, number, fullName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          description: Номер клиента
+        fullName:
+          type: string
+    AuthToken:
+      type: object
+      additionalProperties: false
+      required: [accessToken, tokenType, expiresInSec, client]
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+          const: Bearer
+        expiresInSec:
+          type: integer
+        client:
+          $ref: '#/components/schemas/ClientSummary'
+    Tariff:
+      type: object
+      additionalProperties: false
+      required: [code, name, dailyPhoneTransferLimit, freeMonthlyVolume, commissionRateBps, commissionMin, commissionMax]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        dailyPhoneTransferLimit:
+          $ref: '#/components/schemas/Money'
+        freeMonthlyVolume:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: Бесплатный месячный объём переводов в другие банки, в копейках
+        commissionRateBps:
+          type: integer
+          description: Ставка комиссии в сотых долях процента, 100 означает 1 %
+        commissionMin:
+          $ref: '#/components/schemas/Money'
+        commissionMax:
+          $ref: '#/components/schemas/Money'
+    LimitUsage:
+      type: object
+      additionalProperties: false
+      required: [limit, used, remaining, resetsAt]
+      properties:
+        limit:
+          $ref: '#/components/schemas/Money'
+        used:
+          $ref: '#/components/schemas/Money'
+        remaining:
+          $ref: '#/components/schemas/Money'
+        resetsAt:
+          $ref: '#/components/schemas/Timestamp'
+    Limits:
+      type: object
+      additionalProperties: false
+      required: [dailyPhoneTransfer, monthlyFreeVolume]
+      properties:
+        dailyPhoneTransfer:
+          $ref: '#/components/schemas/LimitUsage'
+        monthlyFreeVolume:
+          allOf:
+            - $ref: '#/components/schemas/LimitUsage'
+          description: Бесплатный месячный объём переводов в другие банки
+    Profile:
+      type: object
+      additionalProperties: false
+      required: [id, number, fullName, phone, kind, resident, tariff, limits]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        fullName:
+          type: string
+        phone:
+          $ref: '#/components/schemas/Phone'
+        kind:
+          type: string
+          enum: [INDIVIDUAL, ENTREPRENEUR]
+        resident:
+          type: boolean
+        tariff:
+          $ref: '#/components/schemas/Tariff'
+        limits:
+          $ref: '#/components/schemas/Limits'
+    Card:
+      type: object
+      additionalProperties: false
+      required: [id, maskedNumber, product, holderName, expiry, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        maskedNumber:
+          type: string
+          description: Шесть первых и четыре последние цифры номера карты
+        product:
+          type: string
+        holderName:
+          type: string
+        expiry:
+          type: string
+          pattern: '^[0-9]{2}/[0-9]{2}$'
+        status:
+          type: string
+          enum: [ACTIVE, BLOCKED]
+    Account:
+      type: object
+      additionalProperties: false
+      required: [id, number, kind, title, currency, status, isPrimary, balance, held, available, openedAt, cards]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          $ref: '#/components/schemas/AccountNumber'
+        kind:
+          type: string
+          enum: [CURRENT, SAVINGS, SETTLEMENT]
+        title:
+          type: string
+        currency:
+          type: string
+          const: RUB
+        status:
+          type: string
+          enum: [ACTIVE, ARRESTED, CLOSED]
+          description: При аресте счёт принимает деньги, но расходные операции отклоняются
+        isPrimary:
+          type: boolean
+          description: Основной счёт получает переводы по номеру телефона
+        balance:
+          type: integer
+          description: Остаток по проводкам в копейках
+        held:
+          $ref: '#/components/schemas/Money'
+        available:
+          type: integer
+          description: Остаток за вычетом удержаний, в копейках
+        openedAt:
+          $ref: '#/components/schemas/Timestamp'
+        cards:
+          type: array
+          items:
+            $ref: '#/components/schemas/Card'
+    AccountList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Account'
+    StatementEntry:
+      type: object
+      additionalProperties: false
+      required: [id, postedAt, direction, amount, description, operationId, balanceAfter]
+      properties:
+        id:
+          type: integer
+        postedAt:
+          $ref: '#/components/schemas/Timestamp'
+        direction:
+          type: string
+          enum: [DEBIT, CREDIT]
+          description: DEBIT уменьшает остаток счёта клиента, CREDIT увеличивает
+        amount:
+          $ref: '#/components/schemas/Money'
+        description:
+          type: string
+        operationId:
+          type: [string, 'null']
+          format: uuid
+        balanceAfter:
+          type: integer
+          description: Остаток счёта после проводки
+    Statement:
+      type: object
+      additionalProperties: false
+      required: [accountId, accountNumber, from, to, openingBalance, closingBalance, totalDebit, totalCredit, entries]
+      properties:
+        accountId:
+          type: string
+          format: uuid
+        accountNumber:
+          $ref: '#/components/schemas/AccountNumber'
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        openingBalance:
+          type: integer
+        closingBalance:
+          type: integer
+        totalDebit:
+          $ref: '#/components/schemas/Money'
+        totalCredit:
+          $ref: '#/components/schemas/Money'
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatementEntry'
+    OperationType:
+      type: string
+      enum: [OWN_TRANSFER, PHONE_TRANSFER]
+    OperationStatus:
+      type: string
+      enum: [CREATED, CHECKING, ON_REVIEW, PROCESSING, COMPLETED, REJECTED, FAILED, REFUNDED]
+    OwnTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [type, fromAccount, toAccount, amount]
+      properties:
+        type:
+          type: string
+          const: OWN_TRANSFER
+        fromAccount:
+          $ref: '#/components/schemas/AccountNumber'
+        toAccount:
+          $ref: '#/components/schemas/AccountNumber'
+        amount:
+          type: integer
+          minimum: 1
+          maximum: 1000000000000
+          description: Сумма в копейках
+        comment:
+          type: string
+          maxLength: 140
+    PhoneTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [type, fromAccount, recipientPhone, amount]
+      properties:
+        type:
+          type: string
+          const: PHONE_TRANSFER
+        fromAccount:
+          $ref: '#/components/schemas/AccountNumber'
+        recipientPhone:
+          $ref: '#/components/schemas/Phone'
+        recipientBankCode:
+          type: string
+          pattern: '^[A-Z0-9_]{2,20}$'
+          description: Код банка получателя из справочника банков. Без него перевод уходит клиенту ЗапускБанка.
+        amount:
+          type: integer
+          minimum: 1
+          maximum: 1000000000000
+          description: Сумма в копейках
+        comment:
+          type: string
+          maxLength: 140
+    TransferRequest:
+      oneOf:
+        - $ref: '#/components/schemas/OwnTransferRequest'
+        - $ref: '#/components/schemas/PhoneTransferRequest'
+      discriminator:
+        propertyName: type
+    AccountRef:
+      type: object
+      additionalProperties: false
+      required: [id, number]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          $ref: '#/components/schemas/AccountNumber'
+    Recipient:
+      type: object
+      additionalProperties: false
+      required: [accountNumber, phone, bankCode, bankName, displayName]
+      properties:
+        accountNumber:
+          type: [string, 'null']
+          description: Заполнен в переводе между своими счетами
+        phone:
+          type: [string, 'null']
+        bankCode:
+          type: [string, 'null']
+        bankName:
+          type: [string, 'null']
+        displayName:
+          type: [string, 'null']
+          description: Имя получателя в сокращённом виде
+    Rejection:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [DAILY_LIMIT_EXCEEDED, ACCOUNT_ARRESTED, NON_RESIDENT_EXTERNAL_TRANSFER, ANTIFRAUD_REJECTED, OPERATOR_REJECTED, REVIEW_EXPIRED]
+        message:
+          type: string
+    StatusHistoryItem:
+      type: object
+      additionalProperties: false
+      required: [status, at, reasonCode, comment]
+      properties:
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+        at:
+          $ref: '#/components/schemas/Timestamp'
+        reasonCode:
+          type: [string, 'null']
+          description: Причина перехода, например ANTIFRAUD_REVIEW, SBP_REJECTED, SBP_UNAVAILABLE, SBP_TIMEOUT
+        comment:
+          type: [string, 'null']
+    Operation:
+      type: object
+      additionalProperties: false
+      required: [id, number, type, route, status, amount, fee, total, currency, fromAccount, recipient, comment, rejection, createdAt, updatedAt, completedAt, statusHistory]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          description: Номер операции для обращений
+        type:
+          $ref: '#/components/schemas/OperationType'
+        route:
+          type: string
+          enum: [INTERNAL, SBP]
+          description: INTERNAL — внутри ЗапускБанка, SBP — через учебную систему быстрых платежей
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+        amount:
+          type: integer
+          description: Сумма перевода в копейках
+        fee:
+          type: integer
+          description: Комиссия в копейках
+        total:
+          type: integer
+          description: Сумма списания с комиссией в копейках
+        currency:
+          type: string
+          const: RUB
+        fromAccount:
+          $ref: '#/components/schemas/AccountRef'
+        recipient:
+          $ref: '#/components/schemas/Recipient'
+        comment:
+          type: [string, 'null']
+        rejection:
+          anyOf:
+            - $ref: '#/components/schemas/Rejection'
+            - type: 'null'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+        completedAt:
+          type: [string, 'null']
+          format: date-time
+        statusHistory:
+          type: array
+          items:
+            $ref: '#/components/schemas/StatusHistoryItem'
+    OperationPage:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Operation'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    Bank:
+      type: object
+      additionalProperties: false
+      required: [code, name]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+    BankList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Bank'
+    SmsMessage:
+      type: object
+      additionalProperties: false
+      required: [id, phone, channel, kind, text, createdAt]
+      properties:
+        id:
+          type: integer
+        phone:
+          $ref: '#/components/schemas/Phone'
+        channel:
+          type: string
+          enum: [SMS, PUSH]
+        kind:
+          type: string
+        text:
+          type: string
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    SmsList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SmsMessage'
+    ReviewState:
+      type: string
+      enum: [PENDING, APPROVED, REJECTED, EXPIRED]
+    AntifraudRule:
+      type: object
+      additionalProperties: false
+      required: [code, points, description]
+      properties:
+        code:
+          type: string
+          enum: [NEW_RECIPIENT, NIGHT_TIME, AMOUNT_ABOVE_USUAL, HIGH_FREQUENCY]
+        points:
+          type: integer
+        description:
+          type: string
+    ReviewItem:
+      type: object
+      additionalProperties: false
+      required: [operationId, operationNumber, operationStatus, clientNumber, clientName, type, route, amount, recipient, score, rules, state, createdAt, deadlineAt, resolvedAt, resolvedBy, comment]
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        operationNumber:
+          type: string
+        operationStatus:
+          $ref: '#/components/schemas/OperationStatus'
+        clientNumber:
+          type: string
+        clientName:
+          type: string
+        type:
+          $ref: '#/components/schemas/OperationType'
+        route:
+          type: string
+          enum: [INTERNAL, SBP]
+        amount:
+          $ref: '#/components/schemas/Money'
+        recipient:
+          type: object
+          additionalProperties: false
+          required: [phone, bankCode, bankName, displayName]
+          properties:
+            phone:
+              type: [string, 'null']
+            bankCode:
+              type: [string, 'null']
+            bankName:
+              type: [string, 'null']
+            displayName:
+              type: [string, 'null']
+        score:
+          type: integer
+          description: Оценка антифрода
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/AntifraudRule'
+        state:
+          $ref: '#/components/schemas/ReviewState'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        deadlineAt:
+          $ref: '#/components/schemas/Timestamp'
+        resolvedAt:
+          type: [string, 'null']
+          format: date-time
+        resolvedBy:
+          type: [string, 'null']
+        comment:
+          type: [string, 'null']
+    ReviewPage:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewItem'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    ApproveReviewRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        comment:
+          type: string
+          maxLength: 500
+    RejectReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [comment]
+      properties:
+        comment:
+          type: string
+          minLength: 3
+          maxLength: 500
+    RecipientLookup:
+      type: object
+      additionalProperties: false
+      required: [phone, bankCode, bankName, displayName, known]
+      properties:
+        phone:
+          $ref: '#/components/schemas/Phone'
+        bankCode:
+          type: string
+        bankName:
+          type: string
+        displayName:
+          type: [string, 'null']
+          description: Имя получателя в сокращённом виде, если оно известно
+        known:
+          type: boolean
+          description: true, если клиент уже переводил этому получателю
+    OperatorRole:
+      type: string
+      enum: [OPERATOR, SENIOR]
+      description: OPERATOR разбирает проверки, SENIOR дополнительно правит тарифы и лимиты
+    Operator:
+      type: object
+      additionalProperties: false
+      required: [id, login, fullName, shortName, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        login:
+          type: string
+        fullName:
+          type: string
+        shortName:
+          type: string
+        role:
+          $ref: '#/components/schemas/OperatorRole'
+    OperatorLoginRequest:
+      type: object
+      additionalProperties: false
+      required: [login, password]
+      properties:
+        login:
+          type: string
+          minLength: 1
+          maxLength: 64
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+    OperatorToken:
+      type: object
+      additionalProperties: false
+      required: [accessToken, tokenType, expiresInSec, operator]
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+          const: Bearer
+        expiresInSec:
+          type: integer
+        operator:
+          $ref: '#/components/schemas/Operator'
+    ThresholdPair:
+      type: object
+      additionalProperties: false
+      required: [review, reject]
+      properties:
+        review:
+          type: integer
+        reject:
+          type: integer
+    ReviewClient:
+      type: object
+      additionalProperties: false
+      required: [number, fullName, kind, resident, customerSince, tariffName, usualAmount, accountNumber]
+      properties:
+        number:
+          type: string
+        fullName:
+          type: string
+        kind:
+          type: string
+          enum: [INDIVIDUAL, ENTREPRENEUR]
+        resident:
+          type: boolean
+        customerSince:
+          $ref: '#/components/schemas/Timestamp'
+        tariffName:
+          type: string
+        usualAmount:
+          type: [integer, 'null']
+          description: Средняя сумма прежних переводов по телефону в копейках, null если переводов не было
+        accountNumber:
+          $ref: '#/components/schemas/AccountNumber'
+    ReviewDetails:
+      type: object
+      additionalProperties: false
+      required: [review, client, thresholds, recentOperations]
+      properties:
+        review:
+          $ref: '#/components/schemas/ReviewItem'
+        client:
+          $ref: '#/components/schemas/ReviewClient'
+        thresholds:
+          $ref: '#/components/schemas/ThresholdPair'
+        recentOperations:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfficeOperationRow'
+    OfficeOperationRow:
+      type: object
+      additionalProperties: false
+      required: [id, number, clientNumber, clientName, type, route, status, amount, fee, recipient, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        clientNumber:
+          type: string
+        clientName:
+          type: string
+        type:
+          $ref: '#/components/schemas/OperationType'
+        route:
+          type: string
+          enum: [INTERNAL, SBP]
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+        amount:
+          $ref: '#/components/schemas/Money'
+        fee:
+          $ref: '#/components/schemas/Money'
+        recipient:
+          type: object
+          additionalProperties: false
+          required: [phone, bankCode, bankName, displayName]
+          properties:
+            phone:
+              type: [string, 'null']
+            bankCode:
+              type: [string, 'null']
+            bankName:
+              type: [string, 'null']
+            displayName:
+              type: [string, 'null']
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    OfficeOperationPage:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfficeOperationRow'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    AntifraudResult:
+      type: object
+      additionalProperties: false
+      required: [score, decision, rules, thresholds, decidedAt]
+      properties:
+        score:
+          type: integer
+        decision:
+          type: string
+          enum: [APPROVE, REVIEW, REJECT]
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/AntifraudRule'
+        thresholds:
+          $ref: '#/components/schemas/ThresholdPair'
+        decidedAt:
+          $ref: '#/components/schemas/Timestamp'
+    OfficeOperation:
+      type: object
+      additionalProperties: false
+      required: [operation, client, antifraud, review]
+      properties:
+        operation:
+          $ref: '#/components/schemas/Operation'
+        client:
+          type: object
+          additionalProperties: false
+          required: [number, fullName]
+          properties:
+            number:
+              type: string
+            fullName:
+              type: string
+        antifraud:
+          anyOf:
+            - $ref: '#/components/schemas/AntifraudResult'
+            - type: 'null'
+        review:
+          anyOf:
+            - $ref: '#/components/schemas/ReviewItem'
+            - type: 'null'
+    OfficeClient:
+      type: object
+      additionalProperties: false
+      required: [id, number, fullName, phone, kind, resident, inn, status, tariff, customerSince, accountsCount, totalBalance]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        fullName:
+          type: string
+        phone:
+          $ref: '#/components/schemas/Phone'
+        kind:
+          type: string
+          enum: [INDIVIDUAL, ENTREPRENEUR]
+        resident:
+          type: boolean
+        inn:
+          type: [string, 'null']
+        status:
+          type: string
+          enum: [ACTIVE, BLOCKED]
+        tariff:
+          type: object
+          additionalProperties: false
+          required: [code, name]
+          properties:
+            code:
+              type: string
+            name:
+              type: string
+        customerSince:
+          $ref: '#/components/schemas/Timestamp'
+        accountsCount:
+          type: integer
+        totalBalance:
+          type: integer
+          description: Остаток по всем счетам клиента в копейках
+    OfficeClientPage:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfficeClient'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    OfficeAccount:
+      type: object
+      additionalProperties: false
+      required: [id, number, kind, title, status, balance, held, available]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          $ref: '#/components/schemas/AccountNumber'
+        kind:
+          type: string
+          enum: [CURRENT, SAVINGS, SETTLEMENT]
+        title:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, ARRESTED, CLOSED]
+        balance:
+          type: integer
+        held:
+          $ref: '#/components/schemas/Money'
+        available:
+          type: integer
+    OfficeClientDetails:
+      type: object
+      additionalProperties: false
+      required: [client, accounts, tariff, limits, dailyLimitOverride, recentOperations]
+      properties:
+        client:
+          $ref: '#/components/schemas/OfficeClient'
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfficeAccount'
+        tariff:
+          $ref: '#/components/schemas/Tariff'
+        limits:
+          $ref: '#/components/schemas/Limits'
+        dailyLimitOverride:
+          type: [integer, 'null']
+          description: Личный суточный лимит в копейках, null если действует лимит тарифа
+        recentOperations:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfficeOperationRow'
+    DailyLimitUpdate:
+      type: object
+      additionalProperties: false
+      required: [dailyPhoneTransferLimit]
+      properties:
+        dailyPhoneTransferLimit:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 1000000000000
+          description: Новый личный лимит в копейках или null
+    TariffList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tariff'
+    TariffUpdate:
+      type: object
+      additionalProperties: false
+      required: [dailyPhoneTransferLimit, freeMonthlyVolume, commissionRateBps, commissionMin, commissionMax]
+      properties:
+        dailyPhoneTransferLimit:
+          $ref: '#/components/schemas/Money'
+        freeMonthlyVolume:
+          $ref: '#/components/schemas/Money'
+        commissionRateBps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        commissionMin:
+          $ref: '#/components/schemas/Money'
+        commissionMax:
+          $ref: '#/components/schemas/Money'
+    OfficeNotification:
+      type: object
+      additionalProperties: false
+      required: [id, phone, clientName, channel, kind, text, operationNumber, createdAt]
+      properties:
+        id:
+          type: integer
+        phone:
+          $ref: '#/components/schemas/Phone'
+        clientName:
+          type: [string, 'null']
+        channel:
+          type: string
+          enum: [SMS, PUSH]
+        kind:
+          type: string
+        text:
+          type: string
+        operationNumber:
+          type: [string, 'null']
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    OfficeNotificationPage:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfficeNotification'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, database]
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
+        database:
+          type: string
+          enum: [UP, DOWN]

@@ -1,0 +1,5 @@
+* text=auto
+stand text eol=lf
+stand.cmd text eol=crlf
+*.sh text eol=lf
+images/** text eol=lf

@@ -1,0 +1,104 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pult:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pult
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pult/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:unit
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Профили compose разворачиваются
+        env:
+          KIT_VERSION: 0.1.0
+          KIT_HOST_DIR: ${{ github.workspace }}
+        run: |
+          docker network create stands-kit
+          docker volume create stands-kit-data
+          docker compose -f compose.yaml \
+            --profile rabbitmq --profile kafka --profile camunda --profile elasticsearch \
+            --profile postgres --profile contracts --profile clickhouse --profile monitoring \
+            --profile linux --profile bank config --quiet
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Образ пульта собирается под обе архитектуры
+        uses: docker/build-push-action@v6
+        with:
+          context: pult
+          platforms: linux/amd64,linux/arm64
+          push: false
+      - name: Образ linux-сервера собирается под обе архитектуры
+        uses: docker/build-push-action@v6
+        with:
+          context: images/linux-server
+          platforms: linux/amd64,linux/arm64
+          push: false
+      - name: Образ банка собирается под обе архитектуры
+        uses: docker/build-push-action@v6
+        with:
+          context: bank
+          platforms: linux/amd64,linux/arm64
+          push: false
+
+  bank:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15
+        env:
+          POSTGRES_USER: bank
+          POSTGRES_PASSWORD: bank
+          POSTGRES_DB: bank
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bank"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: bank
+    env:
+      TEST_DATABASE_URL: postgres://bank:bank@127.0.0.1:5432/bank
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bank/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx eslint src
+      - run: npx tsc --noEmit -p web/tsconfig.json
+      - run: npx eslint web/src
+      - run: npm run build
+      - run: npm run test:unit
+      - run: npm test
