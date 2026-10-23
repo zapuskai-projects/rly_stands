@@ -7,16 +7,32 @@ import { buildRows, findModule } from '../modules/view';
 import type { Session, SessionModule } from '../platform/types';
 import { clearConfig, readNotices, takeNotices } from '../store/stores';
 import { color, errorLine, line } from '../util/out';
+import { compareVersions } from '../util/version';
 import { runDoctor } from './doctor';
 import { formatShortDate } from './format';
 import { runMenu } from './menu/run';
 import { renderRows } from './menu/render';
 import { consoleProgress } from './progress';
 import { loadSession, login, type SessionContext } from './session';
+import { startProjectFlow } from './start';
+
+/** Код выхода «обновите набор»: скрипт ./stand делает git pull и запускает пульт заново. */
+export const UPDATE_EXIT_CODE = 75;
+
+export function shouldSelfUpdate(runtime: Runtime, ctx: SessionContext, env: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    env.STAND_SELF_UPDATE === '1' &&
+    env.STAND_UPDATED !== '1' &&
+    !ctx.stale &&
+    compareVersions(runtime.version, ctx.session.kit.latestVersion) < 0
+  );
+}
 
 const USAGE = `Команды набора:
-  ./stand                 меню: запуск и остановка стендов
-  ./stand login           ввести токен с платформы
+  ./stand                 поднять учебный проект и открыть меню
+  ./stand start           поднять учебный проект: стенды и текущий тикет
+  ./stand login           подключить пульт к аккаунту по коду на сайте
+  ./stand login --token   вставить токен с платформы вручную
   ./stand logout          забыть токен на этом компьютере
   ./stand status          состояние стендов
   ./stand up <стенд…>     запустить стенды (kit-rabbitmq или rabbitmq)
@@ -158,7 +174,7 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
     line(USAGE);
     return 0;
   }
-  if (command === 'login') return (await login(runtime)) ? 0 : 1;
+  if (command === 'login') return (await login(runtime, { paste: args.includes('--token') })) ? 0 : 1;
   if (command === 'logout') {
     clearConfig(runtime.dataDir);
     line('Токен удалён с этого компьютера. Запущенные стенды продолжают работать: ./stand down');
@@ -166,7 +182,7 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
   }
   if (command === 'doctor') return runDoctor(runtime);
   if (command === 'agent') return runAgent(runtime);
-  if (command && !['status', 'up', 'down', 'reset', 'tasks', 'task', 'check', 'verify'].includes(command)) {
+  if (command && !['start', 'status', 'up', 'down', 'reset', 'tasks', 'task', 'check', 'verify'].includes(command)) {
     errorLine(`Неизвестная команда: ${command}\n\n${USAGE}`);
     return 1;
   }
@@ -174,11 +190,22 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
   printNotices(runtime, Boolean(command));
   const ctx = await loadSession(runtime, interactive);
   if (!ctx) return 1;
+  if ((!command || command === 'start') && shouldSelfUpdate(runtime, ctx)) {
+    line(`Вышла версия набора ${ctx.session.kit.latestVersion} — обновляю.`);
+    return UPDATE_EXIT_CODE;
+  }
+  if (command === 'start') {
+    const outcome = await startProjectFlow(runtime, ctx.session, consoleProgress);
+    if (!outcome.hasProject) line('Учебного проекта пока нет: стенды запускаются через меню ./stand.');
+    return outcome.code;
+  }
   if (!command) {
     if (!interactive) {
       await printStatus(runtime, ctx);
       return 0;
     }
+    const outcome = await startProjectFlow(runtime, ctx.session, consoleProgress);
+    if (outcome.hasProject) line();
     await runMenu(runtime, ctx);
     return 0;
   }

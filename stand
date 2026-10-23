@@ -5,6 +5,8 @@ KIT_DIR=$(cd "$(dirname "$0")" && pwd)
 VERSION=$(tr -d ' \r\n' < "$KIT_DIR/VERSION")
 IMAGE=${STAND_PULT_IMAGE:-ghcr.io/zapuskai-projects/stands-kit-pult:$VERSION}
 PLATFORM_URL=${STAND_PLATFORM_URL:-https://api.education.zapuskai.com}
+# Код выхода пульта «вышла новая версия набора».
+UPDATE_EXIT=75
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker не найден. Установите Docker Desktop: https://www.docker.com/products/docker-desktop/" >&2
@@ -20,19 +22,116 @@ docker network inspect stands-kit >/dev/null 2>&1 || docker network create stand
 TTY_FLAG=-i
 if [ -t 0 ] && [ -t 1 ]; then TTY_FLAG=-it; fi
 
-exec docker run --rm "$TTY_FLAG" \
-  --network stands-kit \
-  --add-host host.docker.internal:host-gateway \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v stands-kit-data:/data \
-  -v "$KIT_DIR":/kit \
-  -w /kit \
-  -e KIT_HOST_DIR="$KIT_DIR" \
-  -e KIT_VERSION="$VERSION" \
-  -e STAND_PLATFORM_URL="$PLATFORM_URL" \
-  -e STAND_PULT_IMAGE \
-  -e STAND_LINUX_IMAGE \
-  -e STAND_BANK_IMAGE \
-  -e KIT_AGENT_INTERVAL_SEC \
-  -e STAND_MEMORY_TOTAL_MB \
-  "$IMAGE" "$@"
+# Пульт в контейнере просит открыть адрес, дописывая его в .stand/open; открывает этот скрипт.
+OPEN_DIR="$KIT_DIR/.stand"
+OPEN_FILE="$OPEN_DIR/open"
+OPEN_CMD=${STAND_OPEN_COMMAND:-}
+if [ -z "$OPEN_CMD" ]; then
+  if [ "$(uname -s)" = Darwin ] && command -v open >/dev/null 2>&1; then
+    OPEN_CMD=open
+  elif command -v xdg-open >/dev/null 2>&1; then
+    OPEN_CMD=xdg-open
+  fi
+fi
+OPENER=0
+if [ "${STAND_NO_BROWSER:-0}" != 1 ] && [ -n "$OPEN_CMD" ]; then OPENER=1; fi
+
+open_requested() {
+  [ -f "$OPEN_FILE" ] || return 0
+  mv "$OPEN_FILE" "$OPEN_FILE.taken" 2>/dev/null || return 0
+  while IFS= read -r url; do
+    case "$url" in
+      http://*|https://*) $OPEN_CMD "$url" >/dev/null 2>&1 || true ;;
+    esac
+  done < "$OPEN_FILE.taken"
+  rm -f "$OPEN_FILE.taken"
+}
+
+watch_open() {
+  while :; do
+    open_requested
+    sleep 1
+  done
+}
+
+# PULT_EXEC=exec — в фоновом запуске docker заменяет подоболочку, и сигнал из trap попадает прямо в него.
+PULT_EXEC=
+run_pult() {
+  $PULT_EXEC docker run --rm --init "$TTY_FLAG" \
+    --network stands-kit \
+    --add-host host.docker.internal:host-gateway \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v stands-kit-data:/data \
+    -v "$KIT_DIR":/kit \
+    -w /kit \
+    -e KIT_HOST_DIR="$KIT_DIR" \
+    -e KIT_VERSION="$VERSION" \
+    -e STAND_PLATFORM_URL="$PLATFORM_URL" \
+    -e STAND_OPENER="$OPENER" \
+    -e STAND_SELF_UPDATE=1 \
+    -e STAND_UPDATED \
+    -e STAND_NO_BROWSER \
+    -e STAND_MIRROR \
+    -e STAND_PULT_IMAGE \
+    -e STAND_LINUX_IMAGE \
+    -e STAND_BANK_IMAGE \
+    -e KIT_AGENT_INTERVAL_SEC \
+    -e STAND_MEMORY_TOTAL_MB \
+    "$IMAGE" "$@"
+}
+
+WATCH_PID=
+PULT_PID=
+stop_children() {
+  if [ -n "$WATCH_PID" ]; then kill "$WATCH_PID" 2>/dev/null || true; fi
+  if [ -n "$PULT_PID" ]; then kill -TERM "$PULT_PID" 2>/dev/null || true; fi
+}
+trap stop_children EXIT INT TERM HUP
+
+if [ "$OPENER" = 1 ]; then
+  mkdir -p "$OPEN_DIR"
+  rm -f "$OPEN_FILE" "$OPEN_FILE.taken"
+  watch_open </dev/null >/dev/null 2>&1 &
+  WATCH_PID=$!
+fi
+
+CODE=0
+if [ "$TTY_FLAG" = -it ]; then
+  # В терминале Ctrl+C получает сам docker.
+  run_pult "$@" || CODE=$?
+else
+  # Без терминала сигнал остановки приходит скрипту: пульт работает в фоне, и trap передаёт сигнал ему.
+  exec 3<&0
+  PULT_EXEC=exec
+  run_pult "$@" <&3 &
+  PULT_PID=$!
+  wait "$PULT_PID" || CODE=$?
+  if kill -0 "$PULT_PID" 2>/dev/null; then wait "$PULT_PID" || CODE=$?; fi
+  PULT_PID=
+fi
+
+if [ -n "$WATCH_PID" ]; then
+  kill "$WATCH_PID" 2>/dev/null || true
+  open_requested
+fi
+
+if [ "$CODE" = "$UPDATE_EXIT" ]; then
+  if [ "${STAND_UPDATED:-0}" = 1 ]; then
+    exit 1
+  fi
+  if git -C "$KIT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if git -C "$KIT_DIR" pull --ff-only; then
+      echo "Набор обновлён до версии $(tr -d ' \r\n' < "$KIT_DIR/VERSION")."
+    else
+      echo "Обновить набор само не получилось: в папке набора есть свои изменения." >&2
+      echo "Обновите вручную: cd \"$KIT_DIR\" && git pull. Пока работаю на старой версии." >&2
+    fi
+  else
+    echo "Набор скачан архивом, обновить его само не получится." >&2
+    echo "Скачайте новую версию со страницы «Как установить» на платформе. Пока работаю на старой версии." >&2
+  fi
+  STAND_UPDATED=1
+  export STAND_UPDATED
+  exec "$KIT_DIR/stand" "$@"
+fi
+exit "$CODE"

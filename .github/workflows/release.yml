@@ -36,6 +36,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Зеркало сторонних образов
+        run: |
+          while read -r source target; do
+            case "$source" in ''|'#'*) continue ;; esac
+            docker buildx imagetools create --tag "$REGISTRY/$OWNER/mirror/$target" "$source"
+          done < images/mirror.txt
+
       - name: Версия образов
         id: version
         run: echo "value=$(tr -d ' \r\n' < VERSION)" >> "$GITHUB_OUTPUT"

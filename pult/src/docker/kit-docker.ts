@@ -66,20 +66,49 @@ function composeArgs(runtime: Runtime, profiles: string[], tail: string[]): stri
   ];
 }
 
+function composeEnv(runtime: Runtime): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    KIT_HOST_DIR: runtime.hostDir,
+    KIT_VERSION: runtime.version,
+    KIT_SECRET: readBankSecret(runtime.dataDir) ?? '',
+  };
+}
+
 export function composeUp(
   runtime: Runtime,
   profiles: string[],
   onLine: (line: string) => void,
 ): Promise<number> {
   return runStreaming('docker', composeArgs(runtime, profiles, ['up', '-d']), onLine, {
-    env: {
-      ...process.env,
-      KIT_HOST_DIR: runtime.hostDir,
-      KIT_VERSION: runtime.version,
-      KIT_SECRET: readBankSecret(runtime.dataDir) ?? '',
-    },
+    env: composeEnv(runtime),
     cwd: runtime.kitDir,
   });
+}
+
+/** Итоговый compose для профилей: сервисы, образы, порты — то, что поднимется. */
+export async function composeConfig(runtime: Runtime, profiles: string[]): Promise<unknown | null> {
+  const result = await run('docker', composeArgs(runtime, profiles, ['config', '--format', 'json']), {
+    env: composeEnv(runtime),
+    cwd: runtime.kitDir,
+  });
+  if (result.code !== 0) return null;
+  try {
+    return JSON.parse(result.stdout) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+export async function localImages(): Promise<Set<string> | null> {
+  const result = await run('docker', ['images', '--format', '{{.Repository}}:{{.Tag}}']);
+  if (result.code !== 0) return null;
+  return new Set(result.stdout.split('\n').filter(Boolean));
+}
+
+export async function kitPublishedPorts(): Promise<string> {
+  const result = await run('docker', ['ps', '--filter', `label=${MODULE_LABEL}`, '--format', '{{.Ports}}']);
+  return result.code === 0 ? result.stdout : '';
 }
 
 async function profileContainerNames(profile: string, onlyRunning: boolean): Promise<string[]> {

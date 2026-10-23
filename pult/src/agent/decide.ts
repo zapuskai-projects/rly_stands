@@ -19,6 +19,7 @@ export type AgentInput = {
 
 const HOUR_MS = 3600 * 1000;
 export const REASON_DISABLED = 'выключен на платформе';
+export const REASON_PROJECT_CLOSED = 'проект закрыт — спросите куратора';
 export const REASON_NOT_ASSIGNED = 'не назначен';
 export const REASON_TOKEN = 'токен отозван или истёк — получите новый на платформе и выполните ./stand login';
 
@@ -51,7 +52,9 @@ export function decideStops(input: AgentInput): StopAction[] {
   for (const profile of input.runningProfiles) {
     const module = result.session.modules.find((item) => item.profile === profile);
     if (!module) {
-      actions.push({ profile, ...describe(input.lastSession, profile), reason: REASON_DISABLED });
+      const before = input.lastSession?.modules.find((item) => item.profile === profile);
+      const reason = before?.project ? REASON_PROJECT_CLOSED : REASON_DISABLED;
+      actions.push({ profile, ...describe(input.lastSession, profile), reason });
     } else if (!module.allowed && !isRequiredByRunning(result.session, module, active)) {
       actions.push({
         profile,

@@ -1,0 +1,15 @@
+# Сторонние образы набора копируются при выпуске в ghcr.io/zapuskai-projects/mirror/<путь>.
+# Студент тянет всё из одного реестра: Docker Hub бывает недоступен и ограничивает скачивания.
+# Формат: <источник> <путь в зеркале>. Новый образ в compose.yaml — сначала строка здесь.
+postgres:16.15 postgres:16.15
+rabbitmq:3.13-management-alpine rabbitmq:3.13-management-alpine
+redpandadata/redpanda:v24.2.4 redpandadata/redpanda:v24.2.4
+tchiotludo/akhq:0.25.0 tchiotludo/akhq:0.25.0
+operaton/operaton:2.1.5 operaton/operaton:2.1.5
+docker.elastic.co/elasticsearch/elasticsearch:8.15.3 elasticsearch:8.15.3
+docker.elastic.co/kibana/kibana:8.15.3 kibana:8.15.3
+plantuml/plantuml-server:jetty-v1.2026.9 plantuml/plantuml-server:jetty-v1.2026.9
+stoplight/prism:5.15.10 stoplight/prism:5.15.10
+clickhouse/clickhouse-server:24.8.14.39 clickhouse/clickhouse-server:24.8.14.39
+prom/prometheus:v3.15.0 prom/prometheus:v3.15.0
+grafana/grafana-oss:12.4.3 grafana/grafana-oss:12.4.3

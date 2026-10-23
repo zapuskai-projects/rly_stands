@@ -12,6 +12,22 @@ export type SessionModule = {
   uis: SessionUi[];
   allowed: boolean;
   reason: string | null;
+  /** Ключ учебного проекта, в окружение которого входит модуль. */
+  project?: string | null;
+};
+
+export type SessionProject = { key: string; title: string; modules: string[] };
+
+export type TaskProject = {
+  key: string;
+  title: string;
+  memberId: string;
+  trackTitle: string;
+  code: string;
+  release: string;
+  state: 'DONE' | 'OPEN' | 'LOCKED';
+  current: boolean;
+  unlocksAfter: string | null;
 };
 
 export type TaskStatus = 'NOT_STARTED' | 'STARTED' | 'FAILED' | 'PASSED';
@@ -19,6 +35,7 @@ export type TaskStatus = 'NOT_STARTED' | 'STARTED' | 'FAILED' | 'PASSED';
 export type SessionTask = {
   id: string;
   title: string;
+  project?: TaskProject | null;
   modules: Array<{ key: string; title: string }>;
   status: TaskStatus;
   attemptId: string | null;
@@ -31,9 +48,12 @@ export type SessionTask = {
 
 export type Session = {
   user: { name: string };
+  /** Адрес сайта платформы для ссылок на страницу тикета. */
+  webUrl?: string | null;
   token: { expiresAt: string };
   kit: { latestVersion: string; minVersion: string; offlineGraceHours: number };
   modules: SessionModule[];
+  projects?: SessionProject[];
   tasks: SessionTask[];
 };
 

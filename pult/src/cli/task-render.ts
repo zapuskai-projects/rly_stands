@@ -9,33 +9,64 @@ const STATUS_WORD: Record<TaskStatus, string> = {
 };
 
 export function taskStatusWord(task: SessionTask): string {
-  return task.needsUpdate ? 'обновите набор' : STATUS_WORD[task.status];
+  if (task.needsUpdate) return 'обновите набор';
+  if (task.project?.state === 'LOCKED') {
+    return task.project.unlocksAfter ? `после ${task.project.unlocksAfter}` : 'закрыт';
+  }
+  return STATUS_WORD[task.status];
 }
 
 function statusColor(task: SessionTask, text: string): string {
   if (task.needsUpdate) return color.yellow(text);
+  if (task.project?.state === 'LOCKED') return color.dim(text);
   if (task.status === 'PASSED') return color.green(text);
   if (task.status === 'FAILED') return color.red(text);
   return task.status === 'NOT_STARTED' ? color.dim(text) : text;
 }
 
+/** Название тикета с кодом проекта: «ZB-101 Перевод между своими счетами». */
+export function taskName(task: SessionTask): string {
+  return task.project ? `${task.project.code} ${task.title}` : task.title;
+}
+
+function groupOf(task: SessionTask): string | null {
+  return task.project ? `${task.project.title} · ${task.project.trackTitle}` : null;
+}
+
 export function renderTaskRows(tasks: SessionTask[], selected: number | null): string[] {
   if (!tasks.length) return ['    Для вас пока нет задач на компьютере.'];
   const numberWidth = String(tasks.length).length;
-  const titleWidth = Math.min(48, Math.max(8, ...tasks.map((task) => task.title.length))) + 2;
+  const titleWidth = Math.min(48, Math.max(8, ...tasks.map((task) => taskName(task).length))) + 2;
   const modulesWidth = Math.max(8, ...tasks.map((task) => task.modules.map((item) => item.title).join(', ').length)) + 2;
-  return tasks.map((task, index) => {
+  const rows: string[] = [];
+  let group: string | null = null;
+  tasks.forEach((task, index) => {
+    const taskGroup = groupOf(task);
+    if (taskGroup && taskGroup !== group) {
+      if (rows.length) rows.push('');
+      rows.push(`   ${color.bold(taskGroup)}`);
+    }
+    group = taskGroup;
     const cursor = selected === index ? color.bold('▸') : ' ';
-    const title = task.title.length > titleWidth - 2 ? `${task.title.slice(0, titleWidth - 3)}…` : task.title;
+    const name = taskName(task);
+    const title = name.length > titleWidth - 2 ? `${name.slice(0, titleWidth - 3)}…` : name;
     const modules = task.modules.map((item) => item.title).join(', ');
-    return ` ${cursor} ${padRight(String(index + 1), numberWidth + 1)}${padRight(title, titleWidth)}${padRight(modules, modulesWidth)}${statusColor(task, taskStatusWord(task))}`.trimEnd();
+    rows.push(
+      ` ${cursor} ${padRight(String(index + 1), numberWidth + 1)}${padRight(title, titleWidth)}${padRight(modules, modulesWidth)}${statusColor(task, taskStatusWord(task))}`.trimEnd(),
+    );
   });
+  return rows;
 }
 
 export function findTask(tasks: SessionTask[], selector: string): SessionTask | undefined {
   const wanted = selector.trim().toLowerCase();
   if (/^\d+$/.test(wanted)) return tasks[Number(wanted) - 1];
-  const exact = tasks.find((task) => task.id.toLowerCase() === wanted || task.title.toLowerCase() === wanted);
+  const exact = tasks.find(
+    (task) =>
+      task.id.toLowerCase() === wanted ||
+      task.title.toLowerCase() === wanted ||
+      task.project?.code.toLowerCase() === wanted,
+  );
   if (exact) return exact;
   const partial = tasks.filter((task) => task.id.toLowerCase().startsWith(wanted) || task.title.toLowerCase().includes(wanted));
   return partial.length === 1 ? partial[0] : undefined;

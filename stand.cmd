@@ -31,6 +31,7 @@ docker run --rm -it ^
   -e KIT_HOST_DIR="%KIT_HOST_DIR%" ^
   -e KIT_VERSION="%VERSION%" ^
   -e STAND_PLATFORM_URL ^
+  -e STAND_MIRROR ^
   -e STAND_PULT_IMAGE ^
   -e STAND_LINUX_IMAGE ^
   -e STAND_BANK_IMAGE ^

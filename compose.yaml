@@ -76,7 +76,7 @@ services:
 
   rabbitmq:
     profiles: [rabbitmq]
-    image: rabbitmq:3.13-management-alpine
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/rabbitmq:3.13-management-alpine
     container_name: stands-kit-rabbitmq
     labels:
       stands.kit.module: rabbitmq
@@ -92,7 +92,7 @@ services:
 
   redpanda:
     profiles: [kafka]
-    image: redpandadata/redpanda:v24.2.4
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/redpandadata/redpanda:v24.2.4
     container_name: stands-kit-redpanda
     labels:
       stands.kit.module: kafka
@@ -114,7 +114,7 @@ services:
 
   akhq:
     profiles: [kafka]
-    image: tchiotludo/akhq:0.25.0
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/tchiotludo/akhq:0.25.0
     container_name: stands-kit-akhq
     labels:
       stands.kit.module: kafka
@@ -133,7 +133,7 @@ services:
 
   operaton:
     profiles: [camunda]
-    image: operaton/operaton:2.1.5
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/operaton/operaton:2.1.5
     container_name: stands-kit-operaton
     labels:
       stands.kit.module: camunda
@@ -145,7 +145,7 @@ services:
 
   elasticsearch:
     profiles: [elasticsearch]
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/elasticsearch:8.15.3
     container_name: stands-kit-elasticsearch
     labels:
       stands.kit.module: elasticsearch
@@ -161,7 +161,7 @@ services:
 
   kibana:
     profiles: [elasticsearch]
-    image: docker.elastic.co/kibana/kibana:8.15.3
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/kibana:8.15.3
     container_name: stands-kit-kibana
     labels:
       stands.kit.module: elasticsearch
@@ -176,7 +176,7 @@ services:
 
   postgres:
     profiles: [postgres]
-    image: postgres:16.15
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/postgres:16.15
     container_name: stands-kit-postgres
     labels:
       stands.kit.module: postgres
@@ -191,7 +191,7 @@ services:
 
   plantuml:
     profiles: [contracts]
-    image: plantuml/plantuml-server:jetty-v1.2026.9
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/plantuml/plantuml-server:jetty-v1.2026.9
     container_name: stands-kit-plantuml
     labels:
       stands.kit.module: contracts
@@ -200,7 +200,7 @@ services:
 
   prism:
     profiles: [contracts]
-    image: stoplight/prism:5.15.10
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/stoplight/prism:5.15.10
     platform: linux/amd64
     container_name: stands-kit-prism
     labels:
@@ -213,7 +213,7 @@ services:
 
   clickhouse:
     profiles: [clickhouse]
-    image: clickhouse/clickhouse-server:24.8.14.39
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/clickhouse/clickhouse-server:24.8.14.39
     container_name: stands-kit-clickhouse
     labels:
       stands.kit.module: clickhouse
@@ -234,7 +234,7 @@ services:
 
   prometheus:
     profiles: [monitoring]
-    image: prom/prometheus:v3.15.0
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/prom/prometheus:v3.15.0
     container_name: stands-kit-prometheus
     labels:
       stands.kit.module: monitoring
@@ -253,7 +253,7 @@ services:
 
   grafana:
     profiles: [monitoring]
-    image: grafana/grafana-oss:12.4.3
+    image: ${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/grafana/grafana-oss:12.4.3
     container_name: stands-kit-grafana
     labels:
       stands.kit.module: monitoring

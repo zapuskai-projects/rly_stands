@@ -7,6 +7,7 @@ import { READINESS } from './modules/readiness';
 import { isVersion } from './util/version';
 
 const ROOT = resolve(__dirname, '../..');
+const MIRROR = '${STAND_MIRROR:-ghcr.io/zapuskai-projects/mirror}/';
 
 type Service = {
   image: string;
@@ -47,12 +48,26 @@ describe('compose.yaml набора', () => {
 
   it('образы закреплены точным тегом, без latest', () => {
     for (const [name, service] of Object.entries(compose.services)) {
-      if (service.image.startsWith('${')) {
-        assert.match(service.image, /stands-kit-(pult|linux|bank):\$\{KIT_VERSION/, name);
+      if (service.image.startsWith(MIRROR)) {
+        const tag = service.image.slice(MIRROR.length).split(':')[1] ?? '';
+        assert.ok(/\d/.test(tag) && tag !== 'latest', `${name}: ${service.image}`);
         continue;
       }
-      const tag = service.image.split(':')[1] ?? '';
-      assert.ok(/\d/.test(tag) && tag !== 'latest', `${name}: ${service.image}`);
+      assert.match(service.image, /stands-kit-(pult|linux|bank):\$\{KIT_VERSION/, name);
+    }
+  });
+
+  it('сторонние образы — только из зеркала набора, каждый есть в списке зеркала', () => {
+    const mirrored = new Set(
+      readFileSync(resolve(ROOT, 'images/mirror.txt'), 'utf8')
+        .split('\n')
+        .filter((row) => row.trim() && !row.startsWith('#'))
+        .map((row) => row.trim().split(/\s+/)[1]),
+    );
+    for (const [name, service] of Object.entries(compose.services)) {
+      if (/stands-kit-(pult|linux|bank)/.test(service.image)) continue;
+      assert.ok(service.image.startsWith(MIRROR), `${name}: ${service.image} не через зеркало`);
+      assert.ok(mirrored.has(service.image.slice(MIRROR.length)), `${name}: нет в images/mirror.txt`);
     }
   });
 

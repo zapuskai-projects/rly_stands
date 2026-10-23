@@ -99,3 +99,34 @@ describe('renderCondition', () => {
     assert.deepEqual(rows, ['Что сделать: настроить маршрут', '', '1. Создайте обменник `abc123.docs`']);
   });
 });
+
+describe('тикеты учебного проекта', () => {
+  const project = (code: string, state: 'DONE' | 'OPEN' | 'LOCKED', unlocksAfter: string | null = null) => ({
+    key: 'zapusk-bank',
+    title: 'ЗапускБанк',
+    memberId: 'm1',
+    trackTitle: 'Аналитик',
+    code,
+    release: 'r1',
+    state,
+    current: state === 'OPEN',
+    unlocksAfter,
+  });
+  const tickets = [
+    task('l0', 'Поднять банк', { project: project('ZB-100', 'DONE'), status: 'PASSED' }),
+    task('l1', 'Перевод между счетами', { project: project('ZB-101', 'OPEN') }),
+    task('l2', 'Лимиты', { project: project('ZB-102', 'LOCKED', 'ZB-101') }),
+  ];
+
+  it('идут группой проекта и роли, с кодом и «после ZB-…» у закрытых', () => {
+    const rows = renderTaskRows(tickets, null).map(stripAnsi);
+    assert.equal(rows[0]?.trim(), 'ЗапускБанк · Аналитик');
+    assert.match(rows[1] ?? '', /1 +ZB-100 Поднять банк .*зачтена/);
+    assert.match(rows[2] ?? '', /2 +ZB-101 Перевод между счетами .*не начата/);
+    assert.match(rows[3] ?? '', /3 +ZB-102 Лимиты .*после ZB-101/);
+  });
+
+  it('находятся по коду тикета', () => {
+    assert.equal(findTask(tickets, 'zb-101')?.id, 'l1');
+  });
+});

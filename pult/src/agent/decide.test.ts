@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Session, SessionResult } from '../platform/types';
-import { decideStops, REASON_DISABLED, REASON_NOT_ASSIGNED, REASON_TOKEN } from './decide';
+import { decideStops, REASON_DISABLED, REASON_NOT_ASSIGNED, REASON_PROJECT_CLOSED, REASON_TOKEN } from './decide';
 
 function session(modules: Session['modules'], graceHours = 24): Session {
   return {
@@ -156,5 +156,19 @@ describe('decideStops', () => {
       now: NOW,
     });
     assert.equal(unrelated.length, 1);
+  });
+
+  it('модуль проекта пропал — проект закрыт, а не «выключен на платформе»', () => {
+    const bank = { ...rabbit, key: 'kit-bank', title: 'ЗапускБанк', profile: 'bank', project: 'zapusk-bank' };
+    const stops = decideStops({
+      result: ok([rabbit]),
+      runningProfiles: ['rabbitmq', 'bank'],
+      lastSession: session([rabbit, bank]),
+      lastOkAt: NOW,
+      now: NOW,
+    });
+    assert.deepEqual(stops, [
+      { profile: 'bank', moduleKey: 'kit-bank', title: 'ЗапускБанк', reason: REASON_PROJECT_CLOSED },
+    ]);
   });
 });
