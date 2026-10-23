@@ -1,4 +1,4 @@
-export type MemoryModule = { title: string; minMemoryMb: number };
+export type MemoryModule = { title: string; minMemoryMb: number; key?: string };
 
 export type MemoryVerdict =
   | { ok: true }
@@ -6,10 +6,12 @@ export type MemoryVerdict =
 
 const HEADROOM_PERCENT = 110;
 
+/** `keep` — ключи стендов, без которых кандидат не работает: их остановить не предлагаем. */
 export function checkMemory(
   totalMb: number,
   running: MemoryModule[],
   candidate: MemoryModule,
+  keep: string[] = [],
 ): MemoryVerdict {
   const needMb = Math.ceil((candidate.minMemoryMb * HEADROOM_PERCENT) / 100);
   const usedMb = running.reduce((sum, module) => sum + module.minMemoryMb, 0);
@@ -18,12 +20,14 @@ export function checkMemory(
   if (totalMb < needMb) return { ok: false, needMb, freeMb, totalMb, stopTitles: [] };
   const stopTitles: string[] = [];
   let freed = freeMb;
-  for (const module of [...running].sort((a, b) => b.minMemoryMb - a.minMemoryMb)) {
+  const stoppable = running.filter((module) => !module.key || !keep.includes(module.key));
+  for (const module of [...stoppable].sort((a, b) => b.minMemoryMb - a.minMemoryMb)) {
     if (freed >= needMb) break;
     stopTitles.push(`${module.title} (${module.minMemoryMb} МБ)`);
     freed += module.minMemoryMb;
   }
-  return { ok: false, needMb, freeMb, totalMb, stopTitles };
+  // Даже остановка всего лишнего не поможет — советовать нечего, только прибавить память.
+  return { ok: false, needMb, freeMb, totalMb, stopTitles: freed >= needMb ? stopTitles : [] };
 }
 
 export function memoryRefusal(verdict: Extract<MemoryVerdict, { ok: false }>): string {

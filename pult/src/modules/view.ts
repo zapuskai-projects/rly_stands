@@ -42,6 +42,7 @@ export function buildRows(
         memoryTotalMb,
         running.filter((item) => item.key !== module.key),
         module,
+        module.requires ?? [],
       );
       if (!verdict.ok) {
         return { ...base, state: 'unavailable', note: memoryRefusal(verdict) };

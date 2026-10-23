@@ -28,7 +28,7 @@ export function comparePrimitives(local: string[], remote: string[]): { verdict:
   };
 }
 
-const MIN_DOCKER_MEMORY_MB = 7168;
+const MIN_DOCKER_MEMORY_MB = 3584;
 
 function report(verdict: Verdict, text: string): void {
   const mark = verdict === 'ok' ? color.green('✓') : verdict === 'warn' ? color.yellow('!') : color.red('✗');
@@ -59,7 +59,7 @@ export async function runDoctor(runtime: Runtime): Promise<number> {
       info.memTotalMb >= MIN_DOCKER_MEMORY_MB ? 'ok' : 'warn',
       info.memTotalMb >= MIN_DOCKER_MEMORY_MB
         ? `Docker отдано ${gb} ГБ памяти`
-        : `Docker отдано ${gb} ГБ памяти — для набора нужно 8 ГБ, прибавьте в настройках Docker`,
+        : `Docker отдано ${gb} ГБ памяти — для проекта нужно 4 ГБ, прибавьте в настройках Docker`,
     );
   } else {
     note('fail', 'Docker не отвечает — запустите Docker Desktop и дождитесь статуса Running');

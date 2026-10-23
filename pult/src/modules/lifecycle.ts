@@ -56,7 +56,7 @@ async function memoryVerdictFor(runtime: Runtime, session: Session, module: Sess
   const running = session.modules.filter(
     (item) => item.key !== module.key && profileState(containers, item.profile) !== 'stopped',
   );
-  const verdict = checkMemory(total, running, module);
+  const verdict = checkMemory(total, running, module, module.requires ?? []);
   return verdict.ok ? null : memoryRefusal(verdict);
 }
 

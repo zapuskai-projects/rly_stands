@@ -52,4 +52,17 @@ describe('checkMemory', () => {
       );
     }
   });
+
+  it('не предлагает остановить то, без чего стенд не работает', () => {
+    const broker = { key: 'kit-kafka', title: 'Kafka', minMemoryMb: 600 };
+    const plant = { key: 'kit-contracts', title: 'Контракты', minMemoryMb: 400 };
+    const bank = { key: 'kit-bank', title: 'ЗапускБанк', minMemoryMb: 400 };
+    const withExtra = checkMemory(1200, [broker, plant], bank, ['kit-kafka']);
+    assert.equal(withExtra.ok, false);
+    if (!withExtra.ok) assert.deepEqual(withExtra.stopTitles, ['Контракты (400 МБ)']);
+    const onlyDeps = checkMemory(1000, [broker], bank, ['kit-kafka']);
+    assert.equal(onlyDeps.ok, false);
+    if (!onlyDeps.ok) assert.match(memoryRefusal(onlyDeps), /Прибавьте память Docker/);
+  });
 });
+
