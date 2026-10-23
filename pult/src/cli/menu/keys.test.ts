@@ -39,4 +39,12 @@ describe('keyAction', () => {
     assert.equal(keyAction({ sequence: 'ы' }), null);
     assert.equal(keyAction({}), null);
   });
+
+  it('о — остановить все стенды, р — перезапустить выбранный, в обеих раскладках', () => {
+    assert.equal(keyAction({ name: 'j', sequence: 'о' }), 'stopAll');
+    assert.equal(keyAction({ name: 's', sequence: 's' }), 'stopAll');
+    assert.equal(keyAction({ name: 'h', sequence: 'р' }), 'restart');
+    assert.equal(keyAction({ name: 'r', sequence: 'r' }), 'restart');
+  });
 });
+

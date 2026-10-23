@@ -1,10 +1,12 @@
 export type Key = { name?: string; ctrl?: boolean; sequence?: string };
 
-export type KeyAction = 'interrupt' | 'back' | 'tasks' | 'check' | 'up' | 'down' | 'enter';
+export type KeyAction = 'interrupt' | 'back' | 'tasks' | 'check' | 'stopAll' | 'restart' | 'up' | 'down' | 'enter';
 
 const BACK_LETTERS = new Set(['в', 'В']);
 const TASKS_LETTERS = new Set(['з', 'З']);
 const CHECK_LETTERS = new Set(['п', 'П']);
+const STOP_ALL_LETTERS = new Set(['о', 'О']);
+const RESTART_LETTERS = new Set(['р', 'Р']);
 
 export function keyAction(key: Key): KeyAction | null {
   const name = key.name ?? '';
@@ -13,6 +15,8 @@ export function keyAction(key: Key): KeyAction | null {
   if (name === 'escape' || name === 'q' || BACK_LETTERS.has(sequence)) return 'back';
   if (name === 't' || TASKS_LETTERS.has(sequence)) return 'tasks';
   if (name === 'p' || CHECK_LETTERS.has(sequence)) return 'check';
+  if (name === 's' || STOP_ALL_LETTERS.has(sequence)) return 'stopAll';
+  if (name === 'r' || RESTART_LETTERS.has(sequence)) return 'restart';
   if (name === 'up') return 'up';
   if (name === 'down') return 'down';
   if (name === 'return') return 'enter';

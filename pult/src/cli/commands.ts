@@ -37,6 +37,7 @@ const USAGE = `Команды набора:
   ./stand status          состояние стендов
   ./stand up <стенд…>     запустить стенды (kit-rabbitmq или rabbitmq)
   ./stand down [стенд…]   остановить стенды, без имён — все
+  ./stand restart <стенд…> перезапустить стенды (остановить и запустить)
   ./stand reset <стенд>   удалить контейнеры и данные стенда
   ./stand tasks           список задач
   ./stand task start <номер>  начать задачу: запустить стенды, подготовить, показать условие
@@ -182,7 +183,7 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
   }
   if (command === 'doctor') return runDoctor(runtime);
   if (command === 'agent') return runAgent(runtime);
-  if (command && !['start', 'status', 'up', 'down', 'reset', 'tasks', 'task', 'check', 'verify'].includes(command)) {
+  if (command && !['start', 'status', 'up', 'down', 'restart', 'reset', 'tasks', 'task', 'check', 'verify'].includes(command)) {
     errorLine(`Неизвестная команда: ${command}\n\n${USAGE}`);
     return 1;
   }
@@ -215,6 +216,14 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
   }
   if (command === 'up') return commandUp(runtime, ctx, args);
   if (command === 'down') return commandDown(ctx, args);
+  if (command === 'restart') {
+    if (!args.length) {
+      errorLine('Укажите стенды: ./stand restart kit-bank');
+      return 1;
+    }
+    const stopped = await commandDown(ctx, args);
+    return stopped === 0 ? commandUp(runtime, ctx, args) : stopped;
+  }
   if (command === 'reset') return commandReset(ctx, args);
   return runTaskCommand(runtime, ctx, command!, args);
 }

@@ -100,6 +100,34 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
     return true;
   };
 
+  const stopAll = async (): Promise<boolean> => {
+    const containers = await listKitContainers();
+    const running = ctx.session.modules.filter((item) => profileState(containers, item.profile) !== 'stopped');
+    screen.clear();
+    const { progress, summary } = collectingProgress();
+    if (!running.length) progress.info('Все стенды уже остановлены');
+    for (const module of running) await stopModule(module, progress);
+    message = summary();
+    await refreshRows();
+    return true;
+  };
+
+  /** Остановить и запустить заново: помогает, когда стенд завис или запущен не полностью. */
+  const restart = async (): Promise<boolean> => {
+    const row = rows[selected];
+    if (!row) return true;
+    if (!(await refreshSession())) return false;
+    const module = ctx.session.modules.find((item) => item.key === row.key);
+    if (!module) return true;
+    screen.clear();
+    const { progress, summary } = collectingProgress();
+    if (profileState(await listKitContainers(), module.profile) !== 'stopped') await stopModule(module, progress);
+    await startModule(runtime, ctx.session, module, progress);
+    message = summary();
+    await refreshRows();
+    return true;
+  };
+
   const waitKey = () =>
     new Promise<void>((resolve) => {
       const handler = () => {
@@ -168,6 +196,15 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
       } else if (action === 'check') {
         busy = true;
         const alive = await checkCurrent();
+        busy = false;
+        if (!alive) {
+          draw();
+          finish();
+          return;
+        }
+      } else if ((action === 'stopAll' || action === 'restart') && mode === 'modules') {
+        busy = true;
+        const alive = action === 'stopAll' ? await stopAll() : await restart();
         busy = false;
         if (!alive) {
           draw();
