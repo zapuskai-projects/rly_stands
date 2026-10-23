@@ -2,11 +2,13 @@ import { loadConfig } from './config';
 import { runAntifraud } from './roles/antifraud';
 import { runCore } from './roles/core';
 import { runSbp } from './roles/sbp';
+import { startLogShipping } from './shared/log-shipper';
 import { logger, setLogService } from './shared/logger';
 
 async function main(): Promise<void> {
   const config = loadConfig();
   setLogService(`bank-${config.role}`);
+  startLogShipping(config.logsUrl);
   if (config.role === 'antifraud') await runAntifraud(config);
   else if (config.role === 'sbp') await runSbp(config);
   else await runCore(config);

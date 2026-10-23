@@ -47,6 +47,10 @@ configs:
         - job_name: demo-app
           static_configs:
             - targets: ['demo-app:8200']
+        - job_name: bank-core
+          metrics_path: /metrics
+          static_configs:
+            - targets: ['kit-bank-core:18400']
   grafana-datasource:
     content: |
       apiVersion: 1
@@ -312,6 +316,7 @@ services:
       SBP_URL: http://kit-bank-sbp:18402
       SBP_TIMEOUT_MS: "10000"
       KIT_SECRET: ${KIT_SECRET:-}
+      KIT_LOGS_URL: http://elasticsearch:9200
     depends_on:
       postgres:
         condition: service_started
@@ -336,6 +341,7 @@ services:
       PORT: "18401"
       BANK_DATABASE_URL: ${BANK_DATABASE_URL:-postgres://student:student@postgres:5432/bank}
       BANK_KAFKA_BROKERS: ${BANK_KAFKA_BROKERS:-redpanda:9092}
+      KIT_LOGS_URL: http://elasticsearch:9200
     depends_on:
       kit-bank-core:
         condition: service_started
@@ -352,3 +358,4 @@ services:
       BANK_DATABASE_URL: ${BANK_DATABASE_URL:-postgres://student:student@postgres:5432/bank}
       SBP_MIN_DELAY_MS: "1000"
       SBP_MAX_DELAY_MS: "3000"
+      KIT_LOGS_URL: http://elasticsearch:9200

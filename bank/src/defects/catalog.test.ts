@@ -3,10 +3,11 @@ import { describe, it } from 'node:test';
 import { DEFECT_CODES, isDefectCode, NO_DEFECTS, parseDefectCodes } from './catalog';
 
 describe('каталог сбоев сценария', () => {
-  it('в каталоге семь кодов', () => {
+  it('в каталоге восемь кодов', () => {
     assert.deepEqual([...DEFECT_CODES].sort(), [
       'commission-rounding',
       'daily-limit-utc',
+      'events.duplicate-delivery',
       'idempotency-double-debit',
       'kafka-amount-mismatch',
       'limit-boundary',
@@ -20,6 +21,7 @@ describe('каталог сбоев сценария', () => {
     assert.deepEqual([...parsed].sort(), ['commission-rounding', 'limit-boundary']);
     assert.equal(isDefectCode('нет-такого'), false);
     assert.equal(isDefectCode('sbp-timeout-stuck'), true);
+    assert.equal(isDefectCode('events.duplicate-delivery'), true);
   });
 
   it('без списка не включено ничего', () => {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { connect } from 'amqplib';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { clearedTopics, clearKafkaTopics } from './clear-topics';
 import { handleCreatedMessage, handleDecisionMessage, handleNotificationMessage } from './handlers';
 import { startOutboxPublisher, type BackgroundLoop } from './outbox.publisher';
 import { createDecisionProducer, type DecisionProducer } from './decision-sender';
@@ -35,7 +36,7 @@ describe('обмен через настоящие Kafka и RabbitMQ', { skip: R
     rabbitTransport = new RabbitTransport(RABBIT as string, topics);
     producer = createDecisionProducer(kafka, topics.antifraudDecisions);
     loops.push(
-      startOutboxPublisher(h.pool, new RoutingTransport(kafkaTransport, rabbitTransport), 50),
+      startOutboxPublisher(h.pool, new RoutingTransport(kafkaTransport, rabbitTransport), { intervalMs: 50, clock: h.clock }),
       startKafkaConsumer({ kafka, groupId: `${prefix}antifraud`, topic: topics.paymentsCreated, onMessage: (message) => handleCreatedMessage(h.deps, producer.send, message) }),
       startKafkaConsumer({ kafka, groupId: `${prefix}core`, topic: topics.antifraudDecisions, onMessage: (message) => handleDecisionMessage(h.deps, message) }),
       startNotificationConsumer({ url: RABBIT as string, names: topics, onMessage: (message) => handleNotificationMessage(h.deps, message.body, message.headers) }),
@@ -151,6 +152,73 @@ describe('обмен через настоящие Kafka и RabbitMQ', { skip: R
     const marks = await marksOf(h, broken);
     assert.deepEqual(marks.map((mark) => [mark.code, mark.details.expected, mark.details.actual]), [['kafka-amount-mismatch', 150_050, 1500.5]]);
     assert.deepEqual((await checkLedger(h.pool)).mismatchedAccounts, []);
+  });
+
+  async function readable(topic: string): Promise<number> {
+    const admin = createKafka((KAFKA as string).split(','), `bank-test-offsets-${prefix}`).admin();
+    await admin.connect();
+    try {
+      const offsets = await admin.fetchTopicOffsets(topic);
+      return offsets.reduce((sum, item) => sum + (Number(item.high) - Number(item.low)), 0);
+    } finally {
+      await admin.disconnect();
+    }
+  }
+
+  async function waitForReadable(topic: string, expected: number): Promise<number> {
+    const deadline = Date.now() + 20_000;
+    let count = await readable(topic);
+    while (count !== expected && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      count = await readable(topic);
+    }
+    return count;
+  }
+
+  it('очистка топиков банка убирает записи до текущего конца, а переводы после неё идут через Kafka как обычно', async () => {
+    const topics = configureTopics(prefix);
+    const anna = await h.login(PHONES.ANNA);
+    const from = await accountOf(h, anna);
+    const first = await sendTransfer(h, anna, 'clear-key-0001', phoneTransfer(from.number, PHONES.PETR, 150_050));
+    assert.equal(await waitForStatus(anna, String(pick(first.body, 'id')), 'COMPLETED'), 'COMPLETED');
+    assert.equal(await waitForReadable(topics.paymentsCreated, 1), 1);
+    assert.equal(await waitForReadable(topics.statusChanged, 3), 3);
+    assert.equal(await waitForReadable(topics.antifraudDecisions, 1), 1);
+
+    const kafka = createKafka((KAFKA as string).split(','), `bank-test-clear-${prefix}`);
+    await clearKafkaTopics(kafka, clearedTopics(topics));
+    for (const topic of clearedTopics(topics)) assert.equal(await readable(topic), 0, topic);
+
+    const second = await sendTransfer(h, anna, 'clear-key-0002', phoneTransfer(from.number, PHONES.PETR, 150_050));
+    assert.equal(await waitForStatus(anna, String(pick(second.body, 'id')), 'COMPLETED'), 'COMPLETED');
+    assert.equal(await waitForReadable(topics.paymentsCreated, 1), 1);
+    assert.equal(await waitForReadable(topics.antifraudDecisions, 1), 1);
+    assert.equal((await readCreatedEvent(String(pick(second.body, 'id'))))?.amount, 150_050);
+  });
+
+  it('очистка не падает, если топиков ещё нет', async () => {
+    const kafka = createKafka((KAFKA as string).split(','), `bank-test-clear-${prefix}`);
+    await clearKafkaTopics(kafka, [`${prefix}never.created`]);
+  });
+
+  it('events.duplicate-delivery: в настоящем топике событие операции с нечётным номером лежит дважды, без сбоя один раз', async () => {
+    const topics = configureTopics(prefix);
+    const anna = await h.login(PHONES.ANNA);
+    const from = await accountOf(h, anna);
+    const send = async (key: string) => {
+      const created = await sendTransfer(h, anna, key, phoneTransfer(from.number, PHONES.PETR, 100_000));
+      assert.equal(await waitForStatus(anna, String(pick(created.body, 'id')), 'COMPLETED'), 'COMPLETED');
+    };
+    await send('twice-key-0001');
+    await send('twice-key-0002');
+    assert.equal(await waitForReadable(topics.paymentsCreated, 2), 2);
+    assert.equal(await waitForReadable(topics.statusChanged, 6), 6);
+
+    await setDefects(h, ['events.duplicate-delivery']);
+    await send('twice-key-0003');
+    await send('twice-key-0004');
+    assert.equal(await waitForReadable(topics.paymentsCreated, 5), 5);
+    assert.equal(await waitForReadable(topics.statusChanged, 15), 15);
   });
 });
 

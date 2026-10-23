@@ -19,6 +19,22 @@ const PROCESS = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:process>
 </bpmn:definitions>`;
 
+const ESCALATION = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="defs" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="live_escalation" isExecutable="true">
+    <bpmn:startEvent id="start"/>
+    <bpmn:userTask id="operatorReview" name="Проверка оператором" camunda:candidateGroups="operator"/>
+    <bpmn:boundaryEvent id="operatorTimer" attachedToRef="operatorReview"><bpmn:timerEventDefinition><bpmn:timeDuration>PT30M</bpmn:timeDuration></bpmn:timerEventDefinition></bpmn:boundaryEvent>
+    <bpmn:userTask id="seniorReview" name="Проверка старшим" camunda:candidateGroups="senior"/>
+    <bpmn:endEvent id="approved"/>
+    <bpmn:endEvent id="expired"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="operatorReview"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="operatorReview" targetRef="approved"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="operatorTimer" targetRef="seniorReview"/>
+    <bpmn:sequenceFlow id="f4" sourceRef="seniorReview" targetRef="expired"/>
+  </bpmn:process>
+</bpmn:definitions>`;
+
 liveSuite('camunda', READINESS.camunda ?? [], 'Camunda: проверки на живом движке', ({ probe, write }) => {
   it('пока схемы нет, процесса нет, прогон сообщает «не развёрнуто»', async () => {
     assert.equal((await probe<Facts>('camunda.process', { key: 'live_missing' })).exists, false);
@@ -74,5 +90,46 @@ liveSuite('camunda', READINESS.camunda ?? [], 'Camunda: проверки на ж
     assert.equal(done.ended, true);
     assert.deepEqual(done.pathIds, ['start', 'gateway', 'director', 'end']);
     assert.equal(done.path[2].type, 'userTask');
+  });
+
+  it('таймер задачи выполняется сразу: процесс переходит к старшему и ждёт его', async () => {
+    await probe('camunda.deploy', { bpmnXml: ESCALATION });
+    const run = await probe<Facts>('camunda.runPath', { key: 'live_escalation', fireTimers: 1 });
+    assert.equal(run.timersFired, 1);
+    assert.equal(run.ended, false);
+    assert.equal(run.pathIds.includes('seniorReview'), true);
+    assert.deepEqual(run.waitingFor, ['senior']);
+    assert.equal(run.openTasks[0].id, 'seniorReview');
+    const approved = await probe<Facts>('camunda.runPath', { key: 'live_escalation', completeUserTasks: true });
+    assert.equal(approved.ended, true);
+    assert.equal(approved.timersFired, 0);
+    assert.equal(approved.pathIds.at(-1), 'approved');
+  });
+
+  it('снятие процесса: все развёртывания по ключу удалены вместе с экземплярами, чужие процессы остаются', async () => {
+    await probe('camunda.deploy', { bpmnXml: ESCALATION });
+    await probe('camunda.deploy', { bpmnXml: ESCALATION });
+    await probe('camunda.runPath', { key: 'live_escalation' });
+    await probe('camunda.deploy', { bpmnXml: PROCESS });
+    const removed = await probe<Facts>('camunda.undeploy', { key: 'live_escalation' });
+    assert.ok(removed.removed >= 2, `снято развёртываний: ${removed.removed}`);
+    assert.equal((await probe<Facts>('camunda.process', { key: 'live_escalation' })).exists, false);
+    assert.equal((await probe<Facts>('camunda.runPath', { key: 'live_escalation' })).state, 'NOT_DEPLOYED');
+    assert.equal((await probe<Facts>('camunda.process', { key: 'live_approval' })).exists, true);
+  });
+
+  it('снятие процесса не задевает другой процесс из того же файла развёртывания', async () => {
+    const twin = (key: string) => `<bpmn:process id="${key}" isExecutable="true"><bpmn:startEvent id="${key}_s"/><bpmn:endEvent id="${key}_e"/><bpmn:sequenceFlow id="${key}_f" sourceRef="${key}_s" targetRef="${key}_e"/></bpmn:process>`;
+    const both = `<?xml version="1.0" encoding="UTF-8"?><bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="defs" targetNamespace="http://bpmn.io/schema/bpmn">${twin('live_twin_a')}${twin('live_twin_b')}</bpmn:definitions>`;
+    await probe('camunda.deploy', { bpmnXml: both });
+    assert.deepEqual(await probe('camunda.undeploy', { key: 'live_twin_a' }), { removed: 1 });
+    assert.equal((await probe<Facts>('camunda.process', { key: 'live_twin_a' })).exists, false);
+    assert.equal((await probe<Facts>('camunda.process', { key: 'live_twin_b' })).exists, true);
+    await probe('camunda.undeploy', { key: 'live_twin_b' });
+  });
+
+  it('снятие того, чего нет, — ноль развёртываний, а не сбой', async () => {
+    assert.deepEqual(await probe('camunda.undeploy', { key: 'live_never_deployed' }), { removed: 0 });
+    assert.deepEqual(await probe('camunda.undeploy', { key: 'live_escalation' }), { removed: 0 });
   });
 });

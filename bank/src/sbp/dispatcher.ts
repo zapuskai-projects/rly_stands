@@ -1,4 +1,5 @@
 import { BANK } from '../shared/bank-identity';
+import { bankMetrics, type SbpResult } from '../metrics/bank-metrics';
 import { logger } from '../shared/logger';
 import { toApiAmount } from '../accounts/money';
 import type { BackgroundLoop } from '../events/outbox.publisher';
@@ -30,7 +31,7 @@ async function dispatchOne(deps: SbpDeps, gateway: SbpGateway, operationId: stri
   const operation = result.rows[0];
   if (!operation) return;
   const requestId = operation.request_id ?? 'unknown';
-  logger.info('sbp dispatch', { operationId, requestId });
+  logger.info('sbp dispatch', { operationId, operationNumber: operation.number, requestId });
   const answer = await gateway.send({
     operationId,
     operationNumber: operation.number,
@@ -41,8 +42,9 @@ async function dispatchOne(deps: SbpDeps, gateway: SbpGateway, operationId: stri
     senderBank: BANK.code,
     requestId,
   });
+  bankMetrics.recordSbp(answer.kind.toLowerCase() as SbpResult);
   const applied = await applySbpOutcome(deps, operationId, answer, requestId);
-  logger.info('sbp answer', { operationId, requestId, answer: answer.kind, applied });
+  logger.info('sbp answer', { operationId, operationNumber: operation.number, requestId, answer: answer.kind, applied });
 }
 
 export async function dispatchPendingSbp(deps: SbpDeps, gateway: SbpGateway): Promise<number> {

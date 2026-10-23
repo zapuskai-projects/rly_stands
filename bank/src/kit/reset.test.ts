@@ -32,6 +32,17 @@ describe('сброс банка', () => {
     assert.ok(log.includes("SET LOCAL lock_timeout = '3s'"));
   });
 
+  it('после успешного сброса вызывается очистка топиков, после неудачного нет', async () => {
+    const calls: string[] = [];
+    const afterReset = async () => {
+      calls.push('afterReset');
+    };
+    await resetBank({ pool: fakePool([null]).pool, clock: new BankClock(), afterReset });
+    assert.deepEqual(calls, ['afterReset']);
+    await assert.rejects(resetBank({ pool: fakePool([conflict('23505')]).pool, clock: new BankClock(), afterReset }), /23505/);
+    assert.deepEqual(calls, ['afterReset']);
+  });
+
   it('другая ошибка сразу уходит наружу', async () => {
     const { pool, truncates } = fakePool([conflict('23505')]);
     await assert.rejects(resetBank({ pool, clock: new BankClock() }), /23505/);

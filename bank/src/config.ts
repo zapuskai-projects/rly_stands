@@ -21,6 +21,7 @@ const envSchema = z.object({
   BANK_KAFKA_BROKERS: z.string().min(1).optional(),
   BANK_RABBITMQ_URL: z.string().min(1).optional(),
   KIT_SECRET: z.string().min(1).optional(),
+  KIT_LOGS_URL: z.string().url().or(z.literal('')).optional(),
   SBP_URL: z.string().url().optional(),
   SBP_TIMEOUT_MS: z.coerce.number().int().min(100).max(120_000).default(10_000),
   SBP_MIN_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(1_000),
@@ -40,6 +41,7 @@ export interface Config {
   sbpMaxDelayMs: number;
   topicPrefix: string;
   kitSecret: string | null;
+  logsUrl: string | null;
 }
 
 const REQUIRED_BY_ROLE: Record<BankRole, { name: string; consequence: string }[]> = {
@@ -76,5 +78,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sbpMaxDelayMs: Math.max(values.SBP_MIN_DELAY_MS, values.SBP_MAX_DELAY_MS),
     topicPrefix: values.TOPIC_PREFIX,
     kitSecret: values.KIT_SECRET ?? null,
+    logsUrl: values.KIT_LOGS_URL || null,
   };
 }

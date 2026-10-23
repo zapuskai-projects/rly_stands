@@ -107,6 +107,7 @@ export function createRequestJournal(pool: Pool, clock: BankClock): RequestJourn
         path,
         status: res.statusCode,
         durationMs: Date.now() - startedAt,
+        ...(res.locals.errorCode ? { errorCode: res.locals.errorCode } : {}),
       });
     });
     next();

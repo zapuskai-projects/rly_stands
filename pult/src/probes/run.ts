@@ -23,7 +23,7 @@ export async function collectObservations(
       continue;
     }
     try {
-      out[probe.id] = await executor(probe.params, ctx);
+      out[probe.id] = await executor(probe.params, { ...ctx, observations: out });
       onStep?.({ name: probe.probe, ok: true, detail: null });
     } catch (error) {
       out[probe.id] = { error: errorText(error) };

@@ -285,6 +285,47 @@ liveSuite('bank', READINESS.bank ?? [], 'ЗапускБанк: проверки 
     assert.deepEqual(await personaTraces(), before);
   });
 
+  it('bank.run как шаг подготовки: сид выполняется действиями, результат прогона остаётся для следующих шагов, операции видны по метке задачи', async () => {
+    await scenario({ defects: [] });
+    const before = await personaTraces();
+    const results: Record<string, Record<string, unknown>> = {};
+    const failures: string[] = [];
+    const failure = await runActions(
+      [
+        { action: 'bank.scenario', params: { reset: true, defects: [], sbpMode: 'NORMAL', bankTime: 'night' } },
+        {
+          action: 'bank.run',
+          as: 'seed',
+          params: {
+            client: { tariffCode: 'START', balanceKop: 50_000_000 },
+            recipient: { tariffCode: 'START', balanceKop: 100 },
+            timeoutMs: 80_000,
+            steps: [
+              { scenario: { bankTime: 'night', sbpMode: 'NORMAL', defects: [] } },
+              { transfer: { phone: 'client', toPhone: 'recipient', amountKop: 2_000_000, idempotencyKey: 'live-seed-review' } },
+              { review: { decision: 'APPROVE', comment: 'Проверено' } },
+              { transfer: { phone: 'client', toPhone: 'recipient', amountKop: 10_000, idempotencyKey: 'live-seed-small' } },
+            ],
+          },
+        },
+        { action: 'kit.wait', params: { seconds: 1 } },
+      ],
+      { ...env.context(), results },
+      (step) => {
+        if (!step.ok) failures.push(`${step.name}: ${step.detail}`);
+      },
+    );
+    assert.equal(failure, null, failures.join('; '));
+    const seed = results.seed as Facts;
+    assert.equal(seed.completed, true);
+    assert.deepEqual(seed.operations.map((operation: Facts) => operation.status), ['COMPLETED', 'COMPLETED']);
+    assert.ok(seed.transitions.includes('CHECKING -> ON_REVIEW'), 'ночной перевод ушёл на ручную проверку');
+    const labelled = await probe<Facts>('bank.operations', { label: env.label });
+    assert.equal(labelled.count, 2);
+    assert.deepEqual(await personaTraces(), before);
+    await scenario({ defects: [] });
+  });
+
   it('bank.http: настоящий вызов API от имени клиента пишет журнал запросов с кодами, повтором и дублями ключей', async () => {
     await scenario({ defects: [] });
     const body = { type: 'PHONE_TRANSFER', fromAccount: ACCOUNT_ANNA, recipientPhone: PETR, amount: 10_000 };

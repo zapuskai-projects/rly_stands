@@ -4,10 +4,16 @@ import type { Config } from '../config';
 import { MIGRATIONS_DIR } from '../config';
 import { runMigrations } from '../db/migrate';
 import { createPool } from '../db/pool';
+import { getLogShipper } from '../shared/log-shipper';
 import { logger } from '../shared/logger';
 
 const DATABASE_ATTEMPTS = 15;
 const DATABASE_RETRY_MS = 2000;
+const SHIPPER_STOP_MS = 3000;
+
+function withTimeout(work: Promise<void> | undefined, ms: number): Promise<unknown> {
+  return Promise.race([work ?? Promise.resolve(), new Promise((resolve) => setTimeout(resolve, ms))]);
+}
 
 async function waitForDatabase(pool: Pool, databaseUrl: string): Promise<void> {
   for (let attempt = 1; attempt <= DATABASE_ATTEMPTS; attempt += 1) {
@@ -37,6 +43,7 @@ export function onShutdown(task: () => Promise<void>): void {
     if (started) return;
     started = true;
     task()
+      .then(() => withTimeout(getLogShipper()?.stop(), SHIPPER_STOP_MS))
       .catch((error: unknown) => logger.error('shutdown failed', { error: error instanceof Error ? error.message : String(error) }))
       .finally(() => process.exit(0));
   };

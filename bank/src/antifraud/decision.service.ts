@@ -2,8 +2,9 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import type { BankClock } from '../clock/bank-clock';
 import { withTransaction } from '../db/pool';
-import { beginProcessing, rejectOperation, requireLockedOperation } from '../payments/lifecycle';
-import { transitionOperation } from '../payments/operations.repository';
+import { SkippableMessageError } from '../events/kafka';
+import { beginProcessing, rejectOperation } from '../payments/lifecycle';
+import { lockOperation, transitionOperation } from '../payments/operations.repository';
 import { reviewDeadline } from '../review/deadline';
 import { insertManualReview } from '../review/review.repository';
 
@@ -30,7 +31,8 @@ export async function applyAntifraudDecision(deps: DecisionDeps, raw: unknown, r
   const decision = decisionSchema.parse(raw);
   const context = { clock: deps.clock, requestId };
   return withTransaction(deps.pool, async (tx): Promise<DecisionOutcome> => {
-    const operation = await requireLockedOperation(tx, decision.operationId);
+    const operation = await lockOperation(tx, decision.operationId);
+    if (!operation) throw new SkippableMessageError(`Операции ${decision.operationId} нет: решение устарело`);
     if (operation.status !== 'CHECKING') return 'IGNORED';
     const now = deps.clock.now();
     await tx.query(

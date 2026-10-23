@@ -55,6 +55,33 @@ describe('факты диаграмм', () => {
     assert.equal(c4.relations[0]?.technology, 'HTTPS');
   });
 
+  it('C4: подписи и техника всех связей одним текстом для поиска топиков и очередей', () => {
+    const source = [
+      '@startuml',
+      '!include <C4/C4_Container>',
+      'title k3x9ab Банк',
+      'Person(client, "Клиент")',
+      'Container(core, "Ядро", "Node.js")',
+      'ContainerQueue(kafka, "Kafka", "Kafka")',
+      'ContainerQueue(rabbit, "RabbitMQ", "AMQP")',
+      'ContainerDb(ch, "ClickHouse", "ClickHouse")',
+      'System_Ext(sbp, "СБП", "Эмулятор")',
+      'Rel_R(core, kafka, "Публикует bank.payments.created", "Kafka")',
+      'Rel_D(core, rabbit, "Кладёт в очередь bank.notifications", "AMQP")',
+      'Rel_L(ch, kafka, "Читает bank.payments.status-changed", "Kafka")',
+      'Rel(core, sbp, "Запрашивает перевод")',
+      '@enduml',
+    ].join('\n');
+    const facts = c4Facts(source);
+    assert.deepEqual(facts.syntaxErrors, []);
+    assert.deepEqual(facts.elements.map((item) => item.kind), ['Person', 'Container', 'ContainerQueue', 'ContainerQueue', 'ContainerDb', 'System']);
+    assert.equal(facts.elements.at(-1)?.external, true);
+    for (const text of ['bank.payments.created', 'bank.notifications', 'bank.payments.status-changed', 'AMQP']) {
+      assert.ok(facts.relationsText.includes(text), text);
+    }
+    assert.equal(facts.relationsText.includes('bank.antifraud.decisions'), false);
+  });
+
   it('диаграмма состояний: заголовок, состояния, переходы и список рёбер', () => {
     const facts = stateFacts('@startuml\ntitle k3x9ab Статусы\n[*] --> CREATED\nCREATED --> CHECKING : принят\nCHECKING --> [*]\n@enduml');
     assert.equal(facts.title, 'k3x9ab Статусы');

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { duplicateKeys, operationFacts } from './bank';
 import { stateFacts } from './diagrams';
-import { describeMessage, fieldPaths, summarizeByKey } from './kafka';
+import { describeMessage, fieldPaths, summarizeByKey, userTopics } from './kafka';
 import { EXECUTORS } from './registry';
 
 let dir = '';
@@ -235,5 +235,15 @@ describe('kafka.messages: сводка по ключам', () => {
     const [custom] = summarizeByKey([{ key: 'a', partition: 0, offset: 0, value: { seq: 1 } }, { key: 'a', partition: 0, offset: 1, value: { seq: 2 } }], 'seq');
     assert.deepEqual(custom?.orderedBy, { field: 'seq', ok: true });
     assert.deepEqual(summarizeByKey([], 'at'), []);
+  });
+});
+
+describe('список топиков брокера', () => {
+  it('служебные топики брокера не попадают в список, остальные отсортированы без повторов', () => {
+    assert.deepEqual(
+      userTopics(['bank.payments.status-changed', '__consumer_offsets', '_schemas', 'bank.antifraud.decisions', 'bank.payments.created', 'bank.payments.created']),
+      ['bank.antifraud.decisions', 'bank.payments.created', 'bank.payments.status-changed'],
+    );
+    assert.deepEqual(userTopics([]), []);
   });
 });

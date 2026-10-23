@@ -6,6 +6,8 @@ import type { Readiness } from '../shared/readiness';
 import type { Contract } from './contract';
 import { DOCS_DIR, WEB_DIR } from '../config';
 import { mountKit } from '../kit/routes';
+import type { BankMetrics } from '../metrics/bank-metrics';
+import { mountMetrics } from '../metrics/route';
 import { mountDocsContent } from './docs-content';
 import { mountDocs } from './docs-ui';
 import { mountWeb } from './web';
@@ -30,9 +32,11 @@ export interface AppDeps {
   lookupRecipient: RecipientNameLookup;
   kitSecret?: string | null;
   readiness?: Readiness;
+  metrics?: BankMetrics;
+  afterReset?: () => Promise<void>;
 }
 
-export function buildApp({ pool, clock, contract, lookupRecipient, kitSecret = null, readiness }: AppDeps): Express {
+export function buildApp({ pool, clock, contract, lookupRecipient, kitSecret = null, readiness, metrics, afterReset }: AppDeps): Express {
   const app = express();
   app.disable('x-powered-by');
   app.use(requestContext(clock, pool));
@@ -40,7 +44,8 @@ export function buildApp({ pool, clock, contract, lookupRecipient, kitSecret = n
   app.use(journal.middleware);
   mountDocs(app, contract);
   mountDocsContent(app, DOCS_DIR);
-  mountKit(app, { pool, clock, secret: kitSecret, lookupRecipient, journal });
+  if (metrics) mountMetrics(app, metrics);
+  mountKit(app, { pool, clock, secret: kitSecret, lookupRecipient, journal, afterReset });
   app.use(express.json({ limit: '64kb' }));
   registerOperations(
     app,

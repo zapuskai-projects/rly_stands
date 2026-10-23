@@ -5,6 +5,8 @@ import { handleCreatedMessage } from '../events/handlers';
 import { createKafka, startKafkaConsumer } from '../events/kafka';
 import { configureTopics } from '../events/topics';
 import { loadBankClock, startClockSync } from '../scenario/bank-time';
+import { loadScenarioLabel } from '../scenario/scenario.repository';
+import { bindLogContext } from '../shared/log-shipper';
 import { logger } from '../shared/logger';
 import { Readiness } from '../shared/readiness';
 import { connectDatabase, onShutdown } from './common';
@@ -14,6 +16,7 @@ export async function runAntifraud(config: Config): Promise<void> {
   const pool = await connectDatabase(config);
   const clock = await loadBankClock(pool);
   const clockSync = startClockSync(pool, clock);
+  bindLogContext({ label: () => loadScenarioLabel(pool), clock });
 
   const kafka = createKafka(config.kafkaBrokers, 'bank-antifraud');
   const producer = createDecisionProducer(kafka, topics.antifraudDecisions);

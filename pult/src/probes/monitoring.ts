@@ -1,5 +1,7 @@
 import { asArray, asRecord, failure, http, num, str } from './http';
+import { ProbeError } from './errors';
 import { executor, sleep, type ExecutorTable } from './types';
+import { BANK_SBP_SCENARIO, bankIncident, type Incident } from './monitoring-bank';
 import { missingFile, readWorkText } from './work';
 
 const GRAFANA = 'http://grafana:3000';
@@ -78,10 +80,38 @@ async function instantQuery(promql: string) {
   return { series: vector.length, value: raw === undefined ? null : Number(raw), queryError: null };
 }
 
-async function ensureFolder(): Promise<string> {
+type QueryResult = { series: number; value: number | null; queryError: string | null };
+
+const MAX_QUERIES = 20;
+
+export async function queriesOfFile(text: string, run: (promql: string) => Promise<QueryResult> = instantQuery) {
+  const lines = text.split('\n').map((row) => row.trim()).filter((row) => row && !row.startsWith('#'));
+  if (lines.length > MAX_QUERIES) {
+    return { series: 0, value: null, queryError: `слишком много запросов в файле: не больше ${MAX_QUERIES}`, queries: [] };
+  }
+  const whole = await run(text.trim());
+  if (!whole.queryError || lines.length < 2) return { ...whole, queries: [{ query: text.trim(), ...whole }] };
+  const queries = [];
+  for (const query of lines) queries.push({ query, ...(await run(query)) });
+  return { ...queries[0]!, queries };
+}
+
+async function findFolder(): Promise<string | null> {
   const existing = await grafana('/api/folders');
   const found = asArray(existing.json).map(asRecord).find((folder) => str(folder.title) === FOLDER_TITLE);
-  if (found) return str(found.uid);
+  return found ? str(found.uid) : null;
+}
+
+const MIN_DELETE_TITLE = 8;
+
+export function rulesToDelete(rules: Array<Record<string, unknown>>, folderUid: string | null, titleContains: string) {
+  if (!folderUid) return [];
+  return rules.filter((rule) => str(rule.folderUID) === folderUid && str(rule.title).includes(titleContains));
+}
+
+async function ensureFolder(): Promise<string> {
+  const existing = await findFolder();
+  if (existing) return existing;
   const created = await grafana('/api/folders', { method: 'POST', json: { title: FOLDER_TITLE } });
   if (!created.ok) throw failure('Grafana', 'создание папки правил', created);
   return str(asRecord(created.json).uid);
@@ -97,6 +127,25 @@ async function watchRule(titleContains: string, seconds: number, deadlineStart: 
     await sleep(POLL_MS);
   }
   return null;
+}
+
+function demoIncident(scenario: string, label: string, incidentSec: number): Incident {
+  return {
+    prepare: async () => {
+      await demoApp('/scenario', { method: 'DELETE' });
+    },
+    begin: async () => {
+      const launched = await demoApp('/scenario', {
+        method: 'POST',
+        json: { name: scenario, label, durationSec: Math.max(10, incidentSec) },
+      });
+      if (!launched.ok) throw failure('Учебное приложение', 'запуск сценария', launched);
+    },
+    end: async () => {
+      await demoApp('/scenario', { method: 'DELETE' });
+    },
+    transfersSent: () => 0,
+  };
 }
 
 export const MONITORING_EXECUTORS: ExecutorTable = {
@@ -130,9 +179,9 @@ export const MONITORING_EXECUTORS: ExecutorTable = {
 
   'prometheus.queryFile': executor<{ file: string }>(async ({ file }, ctx) => {
     const text = readWorkText(ctx, file);
-    if (text === null) return { series: 0, value: null, queryError: missingFile(file) };
-    if (!text.trim()) return { series: 0, value: null, queryError: `файл work/${file} пуст` };
-    return instantQuery(text.trim());
+    if (text === null) return { series: 0, value: null, queryError: missingFile(file), queries: [] };
+    if (!text.trim()) return { series: 0, value: null, queryError: `файл work/${file} пуст`, queries: [] };
+    return queriesOfFile(text);
   }),
 
   'monitoring.alertDrill': executor<{
@@ -140,20 +189,34 @@ export const MONITORING_EXECUTORS: ExecutorTable = {
     scenario: string;
     calmSec: number;
     incidentSec: number;
+    bankTime?: string;
   }>(async (params, ctx) => {
     const rules = (await listRules()).filter((rule) => str(rule.title).includes(params.ruleTitleContains));
-    if (!rules.length) return { ruleFound: false, firedInCalm: false, firedInIncident: false, firedAfterSec: null };
-    await demoApp('/scenario', { method: 'DELETE' });
-    const calm = await watchRule(params.ruleTitleContains, params.calmSec, Date.now());
-    const started = Date.now();
-    const launched = await demoApp('/scenario', {
-      method: 'POST',
-      json: { name: params.scenario, label: ctx.label, durationSec: Math.max(10, params.incidentSec) },
-    });
-    if (!launched.ok) throw failure('Учебное приложение', 'запуск сценария', launched);
-    const incident = await watchRule(params.ruleTitleContains, params.incidentSec, started);
-    await demoApp('/scenario', { method: 'DELETE' });
-    return { ruleFound: true, firedInCalm: calm !== null, firedInIncident: incident !== null, firedAfterSec: incident };
+    if (!rules.length) {
+      return { ruleFound: false, firedInCalm: false, firedInIncident: false, firedAfterSec: null, transfersSent: 0 };
+    }
+    const incident =
+      params.scenario === BANK_SBP_SCENARIO
+        ? bankIncident(ctx, params.bankTime)
+        : demoIncident(params.scenario, ctx.label, params.incidentSec);
+    let calm: number | null;
+    let fired: number | null;
+    try {
+      await incident.prepare();
+      calm = await watchRule(params.ruleTitleContains, params.calmSec, Date.now());
+      const started = Date.now();
+      await incident.begin();
+      fired = await watchRule(params.ruleTitleContains, params.incidentSec, started);
+    } finally {
+      await incident.end();
+    }
+    return {
+      ruleFound: true,
+      firedInCalm: calm !== null,
+      firedInIncident: fired !== null,
+      firedAfterSec: fired,
+      transfersSent: incident.transfersSent(),
+    };
   }),
 
   'monitoring.scenario': executor<{ name: string; durationSec: number }>(async (params, ctx) => {
@@ -172,6 +235,18 @@ export const MONITORING_EXECUTORS: ExecutorTable = {
     });
     if (!result.ok) throw failure('Grafana', 'загрузка дашборда', result);
     return { imported: true };
+  }),
+
+  'grafana.deleteAlertRules': executor<{ titleContains: string }>(async ({ titleContains }) => {
+    if (titleContains.trim().length < MIN_DELETE_TITLE) {
+      throw new ProbeError(`Название правила для удаления короче ${MIN_DELETE_TITLE} символов: так можно удалить чужое`);
+    }
+    const found = rulesToDelete(await listRules(), await findFolder(), titleContains);
+    for (const rule of found) {
+      const result = await grafana(`/api/v1/provisioning/alert-rules/${encodeURIComponent(str(rule.uid))}`, { method: 'DELETE' });
+      if (!result.ok) throw failure('Grafana', 'удаление правила', result);
+    }
+    return { deleted: found.length };
   }),
 
   'grafana.createAlertRule': executor<{ rule: Record<string, unknown> }>(async ({ rule }, ctx) => {

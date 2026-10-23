@@ -6,6 +6,7 @@ export const DEFECT_CODES = [
   'sbp-timeout-stuck',
   'notify-before-complete',
   'kafka-amount-mismatch',
+  'events.duplicate-delivery',
 ] as const;
 
 export type DefectCode = (typeof DEFECT_CODES)[number];

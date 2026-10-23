@@ -24,6 +24,17 @@ export function operationFacts(body: Record<string, unknown>) {
   };
 }
 
+export function operationTotals(operations: unknown[]): { totalKop: number; transitionsCount: number } {
+  let totalKop = 0;
+  let transitionsCount = 0;
+  for (const operation of operations) {
+    const row = asRecord(operation);
+    totalKop += num(row.amountKop);
+    transitionsCount += Math.max(0, asArray(row.statusHistory).length - 1);
+  }
+  return { totalKop, transitionsCount };
+}
+
 export function duplicateKeys(requests: unknown[]): Array<{ key: string; count: number }> {
   const counts = new Map<string, number>();
   for (const request of requests) {
@@ -42,7 +53,7 @@ export const BANK_EXECUTORS: ExecutorTable = {
     if (!result.ok) throw failure(MODULE, 'чтение операций', result);
     const body = result.json;
     const operations = Array.isArray(body) ? body : asArray(asRecord(body).operations);
-    return { count: operations.length, operations };
+    return { count: operations.length, ...operationTotals(operations), operations };
   }),
 
   'bank.operation': executor<{ id: string }>(async ({ id }, ctx) => {

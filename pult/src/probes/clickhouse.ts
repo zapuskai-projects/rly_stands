@@ -1,3 +1,4 @@
+import { tablesToDrop } from './clickhouse-drop';
 import { asArray, asRecord, failure, http, num, str } from './http';
 import { executor, type ExecutorTable } from './types';
 import { readWorkText } from './work';
@@ -120,6 +121,25 @@ export const CLICKHOUSE_EXECUTORS: ExecutorTable = {
       if (!result.ok) throw failure(MODULE, 'выполнение запроса', result);
     }
     return { executed: true };
+  }),
+
+  'clickhouse.dropTables': executor<{ tables?: string[]; kafkaTopics?: string[] }>(async ({ tables, kafkaTopics }) => {
+    const listed = await execute(
+      `SELECT name, engine, engine_full, create_table_query FROM system.tables WHERE database = ${literal(DATABASE)}`,
+    );
+    if (!listed.ok) throw failure(MODULE, 'чтение списка таблиц', listed);
+    const all = asArray(asRecord(listed.json).data).map((row) => ({
+      name: str(asRecord(row).name),
+      engine: str(asRecord(row).engine),
+      engineFull: str(asRecord(row).engine_full),
+      createQuery: str(asRecord(row).create_table_query),
+    }));
+    const dropped = tablesToDrop(all, tables ?? [], kafkaTopics ?? []);
+    for (const name of dropped) {
+      const result = await execute(`DROP TABLE IF EXISTS \`${DATABASE}\`.\`${name}\` SYNC`);
+      if (!result.ok) throw failure(MODULE, `удаление таблицы ${name}`, result);
+    }
+    return { dropped };
   }),
 
   'clickhouse.insert': executor<{ table: string; rows: Array<Record<string, unknown>> }>(async ({ table, rows }) => {

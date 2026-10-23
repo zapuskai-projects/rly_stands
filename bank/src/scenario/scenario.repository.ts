@@ -9,6 +9,11 @@ export async function saveClockOffsetMs(db: Db, offsetMs: number): Promise<void>
   await db.query('UPDATE scenario SET clock_offset_ms = $1, updated_at = now() WHERE id = 1', [offsetMs]);
 }
 
+export async function loadScenarioLabel(db: Db): Promise<string | null> {
+  const result = await db.query<{ label: string | null }>('SELECT label FROM scenario WHERE id = 1');
+  return result.rows[0]?.label ?? null;
+}
+
 export type SbpMode = 'NORMAL' | 'REJECT' | 'TIMEOUT' | 'DOWN';
 
 export async function loadSbpMode(db: Db): Promise<SbpMode> {

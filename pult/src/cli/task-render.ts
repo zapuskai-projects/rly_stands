@@ -79,9 +79,9 @@ export function renderCondition(markdown: string): string[] {
     .map((row) => row.replace(/\*\*(.+?)\*\*/g, (_, text: string) => color.bold(text)));
 }
 
-export function renderOutcome(title: string, label: string, outcome: CheckOutcome): string[] {
+export function renderOutcome(title: string, outcome: CheckOutcome): string[] {
   const { result } = outcome;
-  const lines = [color.bold(`${title} · метка ${label}`)];
+  const lines = [color.bold(title)];
   for (const item of result.assertionResults) {
     if (item.unavailable) lines.push(color.yellow(`? ${item.title}`));
     else if (item.passed) lines.push(color.green(`✓ ${item.title}`));

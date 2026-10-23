@@ -77,7 +77,7 @@ export function printTaskList(session: Session): void {
 
 function printDefinition(task: CurrentTask): void {
   line();
-  line(color.bold(`${task.title} · метка ${task.label}`));
+  line(color.bold(task.title));
   line(`Стенды: ${task.modules.map((module) => module.title).join(', ')}`);
   line();
   for (const row of renderCondition(task.promptMd)) line(row);
@@ -185,7 +185,7 @@ export async function checkFlow(runtime: Runtime, progress: Progress): Promise<C
     return null;
   }
   line();
-  for (const row of renderOutcome(current.title, current.label, checked.value)) line(row);
+  for (const row of renderOutcome(current.title, checked.value)) line(row);
   if (checked.value.status === 'PASSED') writeCurrentTask(runtime.dataDir, null);
   return checked.value;
 }
@@ -270,7 +270,7 @@ export async function verifyFlow(
   if (!reference) return false;
 
   line();
-  for (const row of renderOutcome(definition.title, definition.label, reference)) line(row);
+  for (const row of renderOutcome(definition.title, reference)) line(row);
   line();
   const emptyRejected = empty.status === 'FAILED';
   const referencePasses = reference.status === 'PASSED';

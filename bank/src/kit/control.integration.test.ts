@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { loadActiveDefects, listDefectMarks } from '../defects/defects.repository';
+import { BankError } from '../shared/errors';
 import { KIT_TEST_SECRET, pick, startHarness, type Harness } from '../testing/harness';
 import { checkLedger } from '../testing/ledger-check';
 import { accountOf, marksOf, NOON_MOSCOW, PHONES, phoneTransfer, sendTransfer } from '../testing/scenarios';
@@ -20,6 +21,7 @@ const ROUTES: [string, string][] = [
   ['GET', '/_kit/facts/ledger'],
   ['GET', '/_kit/facts/requests?label=x'],
   ['GET', '/_kit/facts/tariffs/START'],
+  ['GET', '/_kit/facts/clock'],
 ];
 
 describe('служебный API банка: секрет, сценарий, сброс', { skip: DATABASE_URL ? false : 'нужна TEST_DATABASE_URL' }, () => {
@@ -50,6 +52,15 @@ describe('служебный API банка: секрет, сценарий, с�
       assert.equal((await h.kit('GET', '/_kit/facts/tariffs/START')).status, 200);
       assert.equal((await h.kit('GET', '/_kit/nothing')).status, 404);
       assert.equal((await h.kit('POST', '/_kit/actions/unknown', {})).status, 404);
+    });
+
+    it('время банка: сдвинутое помечено сдвигом, после возврата к настоящему — нет', async () => {
+      await scenario({ bankTime: '2026-10-23T23:10' });
+      const shifted = await h.kit('GET', '/_kit/facts/clock');
+      assert.equal(pick(shifted.body, 'shifted'), true);
+      assert.match(String(pick(shifted.body, 'now')), /^2026-10-23T20:1/);
+      await scenario({ bankTime: null });
+      assert.equal(pick((await h.kit('GET', '/_kit/facts/clock')).body, 'shifted'), false);
     });
 
     it('без KIT_SECRET служебного API нет вовсе, даже с заголовком', async () => {
@@ -182,6 +193,26 @@ describe('служебный API банка: секрет, сценарий, с�
       const report = await checkLedger(h.pool);
       assert.deepEqual(report.mismatchedAccounts, []);
       assert.equal(report.totalOfBalances, 0n);
+    });
+
+    it('после сброса вызывается очистка топиков, её отказ приходит ответом 502, а не молчанием', async () => {
+      const calls: string[] = [];
+      let failure: Error | null = null;
+      const local = await startHarness(DATABASE_URL as string, NOON_MOSCOW, {
+        kitSecret: KIT_TEST_SECRET,
+        afterReset: async () => {
+          calls.push('cleared');
+          if (failure) throw failure;
+        },
+      });
+      try {
+        assert.deepEqual([(await local.kit('POST', '/_kit/reset')).status, calls], [200, ['cleared']]);
+        failure = new BankError(502, 'TOPICS_NOT_CLEARED', 'Не удалось очистить топики банка');
+        const refused = await local.kit('POST', '/_kit/reset');
+        assert.deepEqual([refused.status, pick(refused.body, 'code')], [502, 'TOPICS_NOT_CLEARED']);
+      } finally {
+        await local.close();
+      }
     });
 
     it('после сброса номера операций идут с начала, ключи повтора свободны, вход клиентов и операторов работает, старый токен недействителен', async () => {

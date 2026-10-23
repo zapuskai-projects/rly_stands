@@ -35,6 +35,13 @@ describe('конфигурация банка', () => {
     assert.equal(config.sbpMaxDelayMs, 5000);
   });
 
+  it('адрес журнала в Elasticsearch необязателен, пустое значение считается незаданным', () => {
+    assert.equal(loadConfig(CORE).logsUrl, null);
+    assert.equal(loadConfig({ ...CORE, KIT_LOGS_URL: '' }).logsUrl, null);
+    assert.equal(loadConfig({ ...CORE, KIT_LOGS_URL: 'http://elasticsearch:9200' }).logsUrl, 'http://elasticsearch:9200');
+    assert.throws(() => loadConfig({ ...CORE, KIT_LOGS_URL: 'elasticsearch' }), /KIT_LOGS_URL/);
+  });
+
   it('неизвестная роль и неверный префикс топиков отвергаются', () => {
     assert.throws(() => loadConfig({ ...CORE, BANK_ROLE: 'office' }), /Неверная конфигурация банка/);
     assert.throws(() => loadConfig({ ...CORE, TOPIC_PREFIX: 'a b' }), /Неверная конфигурация банка/);

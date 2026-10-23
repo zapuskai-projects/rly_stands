@@ -61,10 +61,25 @@ export async function accepted(ctx: ProbeContext, path: string, body: unknown, a
 }
 
 export const NOON = 'noon';
+export const NIGHT = 'night';
+
+const BANK_TIME_PRESETS: Record<string, string> = { [NOON]: '12:00', [NIGHT]: '23:10' };
+const PRESET_WITH_OFFSET = /^(noon|night)\+(\d{1,4})m$/;
+const MINUTE_MS = 60_000;
+
+function pad(value: number): string {
+  return String(value).padStart(2, '0');
+}
 
 export function resolveBankTime(value: string | null | undefined, now: Date = new Date()): string | null {
-  if (value === undefined) return null;
-  if (value !== NOON) return value;
+  if (value === undefined || value === null) return null;
+  const shifted = PRESET_WITH_OFFSET.exec(value);
+  const presetKey = shifted?.[1] ?? value;
+  const preset = Object.hasOwn(BANK_TIME_PRESETS, presetKey) ? BANK_TIME_PRESETS[presetKey] : undefined;
+  if (!preset) return value;
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(now);
-  return `${day}T12:00`;
+  if (!shifted) return `${day}T${preset}`;
+  const [hours = 0, minutes = 0] = preset.split(':').map(Number);
+  const moment = new Date(Date.parse(`${day}T00:00:00Z`) + (hours * 60 + minutes + Number(shifted[2])) * MINUTE_MS);
+  return `${moment.getUTCFullYear()}-${pad(moment.getUTCMonth() + 1)}-${pad(moment.getUTCDate())}T${pad(moment.getUTCHours())}:${pad(moment.getUTCMinutes())}`;
 }

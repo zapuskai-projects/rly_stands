@@ -19,6 +19,7 @@ export interface KitDeps {
   secret: string | null;
   lookupRecipient: RecipientNameLookup;
   journal: Pick<RequestJournal, 'settle'>;
+  afterReset?: () => Promise<void>;
 }
 
 const SECRET_HEADER = 'x-kit-secret';
@@ -119,6 +120,10 @@ export function mountKit(app: Express, deps: KitDeps): void {
     const { label } = parseKit(kitSchemas.requestsQuery, req.query);
     await deps.journal.settle(label);
     res.json(await listRequestFacts(deps.pool, label));
+  });
+
+  router.get('/facts/clock', (_req, res) => {
+    res.json({ now: deps.clock.now().toISOString(), shifted: deps.clock.getOffsetMs() !== 0 });
   });
 
   router.get('/facts/tariffs/:code', async (req, res) => {

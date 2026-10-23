@@ -48,7 +48,7 @@ async function handleTransfer(options: SbpAppOptions, req: Request, res: Respons
   const transfer = parsed.data;
   const requestId = String(req.headers['x-request-id'] ?? transfer.requestId);
   const mode = await loadSbpMode(options.pool);
-  logger.info('sbp transfer received', { operationId: transfer.operationId, requestId, mode });
+  logger.info('sbp transfer received', { operationId: transfer.operationId, operationNumber: transfer.operationNumber, requestId, mode });
 
   if (mode === 'DOWN') {
     res.status(503).json({ status: 'UNAVAILABLE', reason: 'Система быстрых платежей недоступна' });
@@ -62,11 +62,11 @@ async function handleTransfer(options: SbpAppOptions, req: Request, res: Respons
   const completed = await sleep(pickDelay(options.minDelayMs, options.maxDelayMs), res);
   if (!completed) return;
   if (mode === 'REJECT') {
-    logger.info('sbp transfer rejected', { operationId: transfer.operationId, requestId });
+    logger.info('sbp transfer rejected', { operationId: transfer.operationId, operationNumber: transfer.operationNumber, requestId });
     res.json({ status: 'REJECTED', reason: REJECT_REASON });
     return;
   }
-  logger.info('sbp transfer accepted', { operationId: transfer.operationId, requestId });
+  logger.info('sbp transfer accepted', { operationId: transfer.operationId, operationNumber: transfer.operationNumber, requestId });
   res.json({ status: 'ACCEPTED', reference: `SBP-${randomUUID().slice(0, 8).toUpperCase()}` });
 }
 

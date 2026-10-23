@@ -69,7 +69,14 @@ export function stateFacts(source: string) {
 
 export function c4Facts(source: string) {
   const parsed = parseC4(source);
-  return { title: extractTitle(source), syntaxErrors: parsed.errors, elements: parsed.elements, relations: parsed.relations };
+  return {
+    title: extractTitle(source),
+    syntaxErrors: parsed.errors,
+    elements: parsed.elements,
+    relations: parsed.relations,
+    relationsText: parsed.relations.map((item) => [item.label, item.technology].filter(Boolean).join(' ')).join('\n'),
+    elementsText: parsed.elements.map((item) => [item.label, item.technology].filter(Boolean).join(' ')).join('\n'),
+  };
 }
 
 async function diagramProbe<T extends { syntaxErrors: string[] }>(
@@ -97,11 +104,13 @@ export const DIAGRAM_EXECUTORS: ExecutorTable = {
   ),
 
   'plantuml.c4': executor<{ file: string }>(({ file }, ctx) =>
-    diagramProbe(readWorkText(ctx, file), file, c4Facts, { elements: [], relations: [] }),
+    diagramProbe(readWorkText(ctx, file), file, c4Facts, { elements: [], relations: [], relationsText: '', elementsText: '' }),
   ),
 
   'bpmn.file': executor<{ file: string }>(async ({ file }, ctx) => {
     const text = readWorkText(ctx, file);
-    return text === null ? { parsed: false, errors: [missingFile(file)], elements: [], flows: [], participants: [], lanes: [] } : parseBpmn(text);
+    return text === null
+      ? { parsed: false, errors: [missingFile(file)], processIds: [], counts: {}, elements: [], flows: [], participants: [], lanes: [] }
+      : parseBpmn(text);
   }),
 };

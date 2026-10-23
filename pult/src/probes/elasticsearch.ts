@@ -1,4 +1,4 @@
-import { errorText } from './errors';
+import { ProbeError, errorText } from './errors';
 import { asArray, asRecord, failure, http, num, str } from './http';
 import { executor, type ExecutorTable } from './types';
 import { readWorkText } from './work';
@@ -6,6 +6,7 @@ import { readWorkText } from './work';
 const MODULE = 'Elasticsearch';
 const BASE = 'http://elasticsearch:9200';
 const FIRST_IDS = 20;
+const INDEX_PATTERN = /^[a-z0-9][a-z0-9._-]*\*?$/;
 
 function rejectionReason(body: unknown): string {
   const error = asRecord(asRecord(body).error);
@@ -91,6 +92,19 @@ export const ELASTICSEARCH_EXECUTORS: ExecutorTable = {
       return { created: true };
     },
   ),
+
+  'elasticsearch.deleteIndices': executor<{ pattern: string }>(async ({ pattern }) => {
+    if (!INDEX_PATTERN.test(pattern)) throw new ProbeError(`Шаблон индексов ${pattern} не принят: только имя с * в конце`);
+    const listed = await call(`/_cat/indices/${pattern}?format=json&h=index&expand_wildcards=open,closed`);
+    if (listed.status === 404) return { deleted: [] };
+    if (!listed.ok) throw failure(MODULE, 'список индексов', listed);
+    const names = asArray(listed.json).map((row) => str(asRecord(row).index));
+    for (const name of names) {
+      const removed = await call(`/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      if (!removed.ok && removed.status !== 404) throw failure(MODULE, 'удаление индекса', removed);
+    }
+    return { deleted: names };
+  }),
 
   'elasticsearch.bulk': executor<{ index: string; docs: Array<Record<string, unknown>> }>(async ({ index, docs }) => {
     const lines = docs.flatMap((doc) => {

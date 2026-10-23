@@ -52,6 +52,15 @@ export function describeMessage<T extends { value: string }>(message: T) {
 
 type KeyedMessage = { key: string; partition: number; offset: number; value: unknown };
 
+export function repeatedEventIds(messages: Array<{ value: unknown }>): string[] {
+  const counts = new Map<string, number>();
+  for (const message of messages) {
+    const id = isPlainRecord(message.value) ? message.value.eventId : undefined;
+    if (typeof id === 'string') counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return [...counts].filter(([, count]) => count > 1).map(([id]) => id).sort();
+}
+
 function sortable(value: unknown): number | string | null {
   if (typeof value === 'number') return value;
   if (typeof value !== 'string') return null;
@@ -83,6 +92,10 @@ export function summarizeByKey(messages: KeyedMessage[], field: string) {
     );
     return { key, count: own.length, partitions, orderedBy: { field, ok } };
   });
+}
+
+export function userTopics(names: string[]): string[] {
+  return [...new Set(names)].filter((name) => !name.startsWith('_')).sort();
 }
 
 function client(): Kafka {
@@ -216,6 +229,19 @@ export const KAFKA_EXECUTORS: ExecutorTable = {
     }),
   ),
 
+  'kafka.topics': executor<Record<string, never>>(() =>
+    withAdmin(async (admin) => {
+      const names = userTopics(await admin.listTopics());
+      const meta = names.length ? await admin.fetchTopicMetadata({ topics: names }) : { topics: [] };
+      const partitions = new Map(meta.topics.map((topic) => [topic.name, topic.partitions.length]));
+      return {
+        count: names.length,
+        names,
+        topics: names.map((name) => ({ name, partitions: partitions.get(name) ?? 0 })),
+      };
+    }),
+  ),
+
   'kafka.consumerGroup': executor<{ groupId: string }>(({ groupId }) =>
     withAdmin(async (admin) => {
       const [group] = (await admin.describeGroups([groupId])).groups;
@@ -240,13 +266,14 @@ export const KAFKA_EXECUTORS: ExecutorTable = {
 
   'kafka.messages': executor<{ topic: string; match?: string; limit?: number; orderField?: string }>(async (params) => {
     const exists = await withAdmin((admin) => topicExists(admin, params.topic));
-    if (!exists) return { count: 0, byKey: [], messages: [], fields: [] };
+    if (!exists) return { count: 0, byKey: [], messages: [], fields: [], repeatedEventIds: [] };
     const messages = (await readMessages(params.topic, params.match, params.limit ?? DEFAULT_MESSAGE_LIMIT)).map(describeMessage);
     return {
       count: messages.length,
       byKey: summarizeByKey(messages, params.orderField ?? DEFAULT_ORDER_FIELD),
       messages,
       fields: [...new Set(messages.flatMap((message) => message.fields))].sort(),
+      repeatedEventIds: repeatedEventIds(messages),
     };
   }),
 

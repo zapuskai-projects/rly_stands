@@ -3,7 +3,7 @@ set -eu
 
 PULT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 KIT_DIR=$(cd "$PULT_DIR/.." && pwd)
-GROUPS_LIST=${*:-messaging data contracts camunda bank}
+GROUPS_LIST=${*:-messaging data contracts camunda bank monitoring}
 NETWORK=stands-kit
 SECRET=live-$$-$(date +%s)
 PROJECT=stands-kit-live
@@ -21,10 +21,11 @@ fi
 services_for() {
   case "$1" in
     messaging) echo "rabbitmq redpanda" ;;
-    data) echo "postgres elasticsearch clickhouse" ;;
+    data) echo "postgres elasticsearch clickhouse redpanda" ;;
     contracts) echo "plantuml" ;;
     camunda) echo "operaton" ;;
     bank) echo "postgres redpanda rabbitmq kit-bank-core kit-bank-antifraud kit-bank-sbp" ;;
+    monitoring) echo "prometheus grafana demo-app postgres redpanda rabbitmq kit-bank-core kit-bank-antifraud kit-bank-sbp" ;;
     *) echo "неизвестная группа $1" >&2; exit 1 ;;
   esac
 }
@@ -49,7 +50,7 @@ docker volume create stands-kit-data >/dev/null
 compose() {
   docker compose -p "$PROJECT" -f "$KIT_DIR/compose.yaml" \
     --profile rabbitmq --profile kafka --profile postgres --profile elasticsearch --profile clickhouse \
-    --profile contracts --profile camunda --profile bank "$@"
+    --profile contracts --profile camunda --profile bank --profile monitoring "$@"
 }
 
 cleanup() {

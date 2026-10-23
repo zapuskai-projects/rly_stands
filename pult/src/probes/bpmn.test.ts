@@ -65,6 +65,63 @@ describe('parseBpmn', () => {
   });
 });
 
+const REVIEW = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="D">
+  <bpmn:process id="manualReview" isExecutable="true">
+    <bpmn:startEvent id="start" />
+    <bpmn:userTask id="operatorReview" name="Оператор" camunda:candidateGroups="operator" />
+    <bpmn:boundaryEvent id="operatorTimer" attachedToRef="operatorReview">
+      <bpmn:timerEventDefinition><bpmn:timeDuration>PT30M</bpmn:timeDuration></bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:userTask id="seniorReview" name="Старший" camunda:assignee="senior" />
+    <bpmn:boundaryEvent id="seniorTimer" attachedToRef="seniorReview" cancelActivity="false">
+      <bpmn:timerEventDefinition><bpmn:timeDuration>PT30M</bpmn:timeDuration></bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:exclusiveGateway id="decision" />
+    <bpmn:endEvent id="approved" />
+    <bpmn:endEvent id="rejected" />
+    <bpmn:sequenceFlow id="a" sourceRef="start" targetRef="operatorReview" />
+    <bpmn:sequenceFlow id="b" sourceRef="operatorReview" targetRef="decision" />
+    <bpmn:sequenceFlow id="c" sourceRef="decision" targetRef="approved" />
+    <bpmn:sequenceFlow id="d" sourceRef="decision" targetRef="rejected" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+describe('parseBpmn: процесс с таймерами', () => {
+  const model = parseBpmn(REVIEW);
+  const byId = (id: string) => model.elements.find((item) => item.id === id);
+
+  it('ключ процесса и число элементов по типам', () => {
+    assert.deepEqual(model.processIds, ['manualReview']);
+    assert.equal(model.counts.startEvent, 1);
+    assert.equal(model.counts.endEvent, 2);
+    assert.equal(model.counts.userTask, 2);
+  });
+
+  it('исполнители задач: группа и исполнитель', () => {
+    assert.deepEqual(byId('operatorReview')?.actors, ['operator']);
+    assert.deepEqual(byId('seniorReview')?.actors, ['senior']);
+  });
+
+  it('граничный таймер: длительность, прерывание, задача', () => {
+    assert.deepEqual(byId('operatorTimer'), {
+      id: 'operatorTimer',
+      type: 'boundaryEvent',
+      name: '',
+      attachedTo: 'operatorReview',
+      interrupting: true,
+      timer: 'PT30M',
+    });
+    assert.equal(byId('seniorTimer')?.interrupting, false);
+    assert.deepEqual(byId('operatorReview')?.boundaryTimer, { timer: 'PT30M', interrupting: true });
+    assert.deepEqual(byId('seniorReview')?.boundaryTimer, { timer: 'PT30M', interrupting: false });
+  });
+
+  it('у шлюза считаются исходящие потоки', () => {
+    assert.equal(byId('decision')?.outgoing, 2);
+  });
+});
+
 describe('bpmnTypeOf', () => {
   it('типы истории Camunda приводятся к именам элементов BPMN', () => {
     assert.equal(bpmnTypeOf('noneEndEvent'), 'endEvent');

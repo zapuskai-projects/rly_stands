@@ -256,4 +256,73 @@ describe('сбои повтора, СБП, уведомлений и событ�
       assert.equal(decision.score, 72);
     });
   });
+
+  describe('events.duplicate-delivery', () => {
+    const idsOn = (topic: string) => h.events.filter((event) => event.topic === topic).map((event) => (event.payload as { eventId: string }).eventId);
+    const repeated = (ids: string[]) => ids.filter((id, index) => ids.indexOf(id) !== index);
+    const digit = (number: unknown) => Number(String(number).slice(-1));
+
+    async function threeTransfers() {
+      const anna = await h.login(ANNA);
+      const from = await accountOf(h, anna);
+      const created = [];
+      for (const key of ['dup-key-0001', 'dup-key-0002', 'dup-key-0003']) created.push(await sendTransfer(h, anna, key, phoneTransfer(from.number, PETR, 100_000)));
+      await h.drain();
+      return { anna, created };
+    }
+
+    it('без сбоя ни одно событие не приходит дважды, пометок нет', async () => {
+      await threeTransfers();
+      assert.deepEqual(repeated(idsOn('bank.payments.created')), []);
+      assert.deepEqual(repeated(idsOn('bank.payments.status-changed')), []);
+      assert.equal(await markCount(h), 0);
+    });
+
+    it('со сбоем события операций с нечётным номером приходят дважды с тем же eventId, остальные один раз', async () => {
+      await setDefects(h, ['events.duplicate-delivery']);
+      const { created } = await threeTransfers();
+      const odd = created.filter((item) => digit(pick(item.body, 'number')) % 2 === 1);
+      assert.ok(odd.length >= 1 && odd.length < 3);
+      const createdFor = (id: unknown) => h.events.filter((event) => event.topic === 'bank.payments.created' && event.headers.operationId === id);
+      for (const item of created) {
+        const expected = odd.includes(item) ? 2 : 1;
+        assert.equal(createdFor(pick(item.body, 'id')).length, expected);
+      }
+      const doubled = repeated(idsOn('bank.payments.created'));
+      assert.equal(doubled.length, odd.length);
+      const statusEvents = h.events.filter((event) => event.topic === 'bank.payments.status-changed' && event.headers.operationId === pick(odd[0]?.body, 'id'));
+      assert.equal(statusEvents.length, 6);
+      assert.equal(repeated(statusEvents.map((event) => (event.payload as { eventId: string }).eventId)).length, 3);
+    });
+
+    it('операции и проводки не затронуты, помечены только повторённые операции, пометка называет топик и событие', async () => {
+      await setDefects(h, ['events.duplicate-delivery']);
+      const { anna, created } = await threeTransfers();
+      for (const item of created) assert.equal(pick((await operationOf(h, anna, item)).body, 'status'), 'COMPLETED');
+      assert.deepEqual((await checkLedger(h.pool)).mismatchedAccounts, []);
+      for (const item of created) {
+        const marks = await marksOf(h, item);
+        if (digit(pick(item.body, 'number')) % 2 === 0) {
+          assert.deepEqual(marks, []);
+          continue;
+        }
+        assert.deepEqual(marks.map((mark) => [mark.code, mark.details.deliveries]), [['events.duplicate-delivery', 2]]);
+        assert.ok(['bank.payments.created', 'bank.payments.status-changed'].includes(String(marks[0]?.details.topic)));
+      }
+    });
+
+    it('после выключения сценарием события снова приходят по одному разу', async () => {
+      await setDefects(h, ['events.duplicate-delivery']);
+      await threeTransfers();
+      await setDefects(h, []);
+      const before = h.events.length;
+      const anna = await h.login(ANNA);
+      const from = await accountOf(h, anna);
+      await sendTransfer(h, anna, 'dup-key-0004', phoneTransfer(from.number, PETR, 100_000));
+      await h.drain();
+      const fresh = h.events.slice(before).filter((event) => event.topic.startsWith('bank.payments.'));
+      assert.ok(fresh.length >= 4);
+      assert.deepEqual(repeated(fresh.map((event) => (event.payload as { eventId: string }).eventId)), []);
+    });
+  });
 });

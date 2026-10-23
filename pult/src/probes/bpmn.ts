@@ -1,6 +1,17 @@
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 
-export type BpmnElement = { id: string; type: string; name: string };
+export type BoundaryTimer = { timer: string; interrupting: boolean };
+export type BpmnElement = {
+  id: string;
+  type: string;
+  name: string;
+  actors?: string[];
+  boundaryTimer?: BoundaryTimer | null;
+  attachedTo?: string;
+  interrupting?: boolean;
+  timer?: string | null;
+  outgoing?: number;
+};
 export type BpmnFlow = { id: string; from: string; to: string; condition: string | null };
 export type BpmnParticipant = { id: string; name: string; process: string | null };
 export type BpmnLane = { id: string; name: string; elements: string[] };
@@ -8,6 +19,8 @@ export type BpmnLane = { id: string; name: string; elements: string[] };
 export type BpmnModel = {
   parsed: boolean;
   errors: string[];
+  processIds: string[];
+  counts: Record<string, number>;
   elements: BpmnElement[];
   flows: BpmnFlow[];
   participants: BpmnParticipant[];
@@ -55,6 +68,8 @@ const parser = new XMLParser({
 const emptyModel = (errors: string[]): BpmnModel => ({
   parsed: false,
   errors,
+  processIds: [],
+  counts: {},
   elements: [],
   flows: [],
   participants: [],
@@ -82,13 +97,59 @@ function textOf(entries: Entry[]): string {
     .trim();
 }
 
+const TIMER_KINDS = ['timeDuration', 'timeDate', 'timeCycle'];
+
+function timerOf(children: Entry[]): string | null {
+  const definition = children.find((child) => tagOf(child) === 'timerEventDefinition');
+  if (!definition) return null;
+  const inner = childrenOf(definition, 'timerEventDefinition');
+  for (const kind of TIMER_KINDS) {
+    const node = inner.find((child) => tagOf(child) === kind);
+    if (node) return textOf(childrenOf(node, kind)) || null;
+  }
+  return null;
+}
+
+function actorsOf(entry: Entry): string[] {
+  const groups = attr(entry, 'candidateGroups')
+    .split(',')
+    .map((item) => item.trim());
+  return [attr(entry, 'assignee').trim(), ...groups].filter((item, index, all) => item && all.indexOf(item) === index);
+}
+
+function describeElement(entry: Entry, tag: string, children: Entry[]): BpmnElement {
+  const element: BpmnElement = { id: attr(entry, 'id'), type: tag, name: attr(entry, 'name') };
+  if (tag === 'userTask') {
+    element.actors = actorsOf(entry);
+    element.boundaryTimer = null;
+  } else if (tag === 'boundaryEvent') {
+    element.attachedTo = attr(entry, 'attachedToRef');
+    element.interrupting = attr(entry, 'cancelActivity') !== 'false';
+    element.timer = timerOf(children);
+  }
+  return element;
+}
+
+function finishModel(model: BpmnModel): void {
+  for (const element of model.elements) {
+    model.counts[element.type] = (model.counts[element.type] ?? 0) + 1;
+    if (element.type.endsWith('Gateway')) {
+      element.outgoing = model.flows.filter((flow) => flow.from === element.id).length;
+    }
+  }
+  for (const boundary of model.elements.filter((item) => item.type === 'boundaryEvent' && item.timer)) {
+    const task = model.elements.find((item) => item.id === boundary.attachedTo && item.type === 'userTask');
+    if (task) task.boundaryTimer = { timer: boundary.timer as string, interrupting: boundary.interrupting === true };
+  }
+}
+
 function collect(entries: Entry[], model: BpmnModel): void {
   for (const entry of entries) {
     const tag = tagOf(entry);
     if (!tag) continue;
     const children = childrenOf(entry, tag);
     if (FLOW_NODES.has(tag)) {
-      model.elements.push({ id: attr(entry, 'id'), type: tag, name: attr(entry, 'name') });
+      model.elements.push(describeElement(entry, tag, children));
       if (NESTED.has(tag)) collect(children, model);
     } else if (tag === 'sequenceFlow') {
       const condition = children.find((child) => tagOf(child) === 'conditionExpression');
@@ -107,6 +168,7 @@ function collect(entries: Entry[], model: BpmnModel): void {
         .map((child) => textOf(childrenOf(child, 'flowNodeRef')));
       model.lanes.push({ id: attr(entry, 'id'), name: attr(entry, 'name'), elements: refs });
     } else if (['definitions', 'process', 'collaboration', 'laneSet', 'childLaneSet'].includes(tag)) {
+      if (tag === 'process' && attr(entry, 'id')) model.processIds.push(attr(entry, 'id'));
       collect(children, model);
     }
   }
@@ -130,7 +192,8 @@ export function parseBpmn(xml: string): BpmnModel {
   if (!root.some((entry) => tagOf(entry) === 'definitions')) {
     return emptyModel(['корневой элемент definitions не найден — это не BPMN-файл']);
   }
-  const model: BpmnModel = { parsed: true, errors: [], elements: [], flows: [], participants: [], lanes: [] };
+  const model: BpmnModel = { parsed: true, errors: [], processIds: [], counts: {}, elements: [], flows: [], participants: [], lanes: [] };
   collect(root, model);
+  finishModel(model);
   return model;
 }

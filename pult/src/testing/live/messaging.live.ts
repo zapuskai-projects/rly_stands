@@ -159,6 +159,14 @@ liveSuite('messaging', (READINESS.kafka ?? []).slice(0, 1), 'Kafka: провер
     assert.equal(topic.configs['retention.ms'], '3600000');
   });
 
+  it('список топиков содержит созданный топик и не содержит служебных', async () => {
+    const topics = await probe<Facts>('kafka.topics', {});
+    assert.equal(topics.names.includes(`live.orders.${run}`), true);
+    assert.equal(topics.names.some((name: string) => name.startsWith('_')), false);
+    assert.equal(topics.count, topics.names.length);
+    assert.equal(topics.topics.find((item: Facts) => item.name === `live.orders.${run}`).partitions, 3);
+  });
+
   it('несуществующий топик — exists=false', async () => {
     const topic = await probe<Facts>('kafka.topic', { name: `live.missing.${run}` });
     assert.equal(topic.exists, false);
@@ -199,7 +207,28 @@ liveSuite('messaging', (READINESS.kafka ?? []).slice(0, 1), 'Kafka: провер
     assert.equal(filtered.count, 1);
     assert.equal(filtered.messages[0].key, 'k2');
     assert.equal((await probe<Facts>('kafka.messages', { topic: `live.read.${run}`, limit: 2 })).count, 2);
-    assert.deepEqual(await probe('kafka.messages', { topic: `live.never.${run}` }), { count: 0, byKey: [], messages: [], fields: [] });
+    assert.deepEqual(await probe('kafka.messages', { topic: `live.never.${run}` }), {
+      count: 0,
+      byKey: [],
+      messages: [],
+      fields: [],
+      repeatedEventIds: [],
+    });
+  });
+
+  it('повторно доставленное событие находится по одинаковому eventId, разные события — нет', async () => {
+    await probe('kafka.createTopic', { name: `live.dups.${run}`, partitions: 1 });
+    const event = (eventId: string) => ({ key: eventId, value: JSON.stringify({ eventId, operationNumber: 'ZB1' }) });
+    await probe('kafka.produce', {
+      topic: `live.dups.${run}`,
+      messages: [event('e-1'), event('e-2'), event('e-1'), event('e-3'), event('e-2'), event('e-1')],
+    });
+    const facts = await probe<Facts>('kafka.messages', { topic: `live.dups.${run}` });
+    assert.equal(facts.count, 6);
+    assert.deepEqual(facts.repeatedEventIds, ['e-1', 'e-2']);
+    await probe('kafka.createTopic', { name: `live.unique.${run}`, partitions: 1 });
+    await probe('kafka.produce', { topic: `live.unique.${run}`, messages: [event('u-1'), event('u-2')] });
+    assert.deepEqual((await probe<Facts>('kafka.messages', { topic: `live.unique.${run}` })).repeatedEventIds, []);
   });
 
   it('сводка по ключам: партиция одна на ключ, порядок по полю значения внутри партиции', async () => {

@@ -9,6 +9,7 @@ import { runMigrations } from '../db/migrate';
 import { searchPathOptions } from '../db/schemas';
 import { handleCreatedMessage, handleDecisionMessage, handleNotificationMessage } from '../events/handlers';
 import { publishPending, type EventTransport } from '../events/outbox.publisher';
+import type { StatusObservation } from '../events/status-observation';
 import type { OutboxRecord } from '../events/outbox.repository';
 import { configureTopics, getTopics } from '../events/topics';
 import { expireOverdueReviews } from '../review/review.service';
@@ -67,6 +68,7 @@ class ScriptedSbp implements SbpGateway {
 export interface DrainOptions {
   brokerDown?: boolean;
   sbp?: boolean;
+  onStatusChanged?: (observation: StatusObservation) => void;
 }
 
 export interface Harness {
@@ -91,6 +93,7 @@ export const KIT_TEST_SECRET = 'kit-test-secret';
 
 export interface HarnessOptions {
   kitSecret?: string | null;
+  afterReset?: () => Promise<void>;
 }
 
 export async function startHarness(databaseUrl: string, startTime: Date, options: HarnessOptions = {}): Promise<Harness> {
@@ -103,7 +106,7 @@ export async function startHarness(databaseUrl: string, startTime: Date, options
   configureTopics('');
   await runMigrations(pool, MIGRATIONS_DIR);
   await seedIfEmpty(pool, clock);
-  const app = buildApp({ pool, clock, contract: loadContract(OPENAPI_PATH), lookupRecipient: (phone, bankCode) => sbp.lookup(phone, bankCode), kitSecret: options.kitSecret ?? null });
+  const app = buildApp({ pool, clock, contract: loadContract(OPENAPI_PATH), lookupRecipient: (phone, bankCode) => sbp.lookup(phone, bankCode), kitSecret: options.kitSecret ?? null, afterReset: options.afterReset });
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -173,7 +176,7 @@ export async function startHarness(databaseUrl: string, startTime: Date, options
     async drain(options = {}) {
       brokerDown = options.brokerDown ?? false;
       for (let round = 0; round < 20; round += 1) {
-        const published = await publishPending(pool, loopback);
+        const published = await publishPending(pool, loopback, { clock, onStatusChanged: options.onStatusChanged });
         const dispatched = options.sbp === false ? 0 : await dispatchPendingSbp(deps, sbp);
         if (published.failed) return;
         if (published.published === 0 && dispatched === 0) return;

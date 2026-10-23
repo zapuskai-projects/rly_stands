@@ -4,15 +4,20 @@ import { loadContract } from '../api/contract';
 import { OPENAPI_PATH, type Config } from '../config';
 import { createKafka, KafkaTransport, startKafkaConsumer } from '../events/kafka';
 import { handleDecisionMessage, handleNotificationMessage } from '../events/handlers';
+import { clearedTopics, clearKafkaTopics } from '../events/clear-topics';
 import { startOutboxPublisher } from '../events/outbox.publisher';
 import { RabbitTransport, startNotificationConsumer } from '../events/rabbit';
+import { reportStatusChange } from '../events/status-report';
 import { configureTopics } from '../events/topics';
 import { RoutingTransport } from '../events/transport';
+import { bankMetrics } from '../metrics/bank-metrics';
 import { expireOverdueReviews } from '../review/review.service';
 import { loadBankClock, startClockSync } from '../scenario/bank-time';
+import { loadScenarioLabel } from '../scenario/scenario.repository';
 import { HttpSbpGateway } from '../sbp/gateway';
 import { startSbpDispatcher } from '../sbp/dispatcher';
 import { seedIfEmpty } from '../seed/seed';
+import { bindLogContext } from '../shared/log-shipper';
 import { logger } from '../shared/logger';
 import { Readiness } from '../shared/readiness';
 import { connectDatabase, onShutdown } from './common';
@@ -24,13 +29,17 @@ export async function runCore(config: Config): Promise<void> {
   const pool = await connectDatabase(config);
   const clock = await loadBankClock(pool);
   const clockSync = startClockSync(pool, clock);
+  bindLogContext({ label: () => loadScenarioLabel(pool), clock });
   await seedIfEmpty(pool, clock);
 
   const kafka = createKafka(config.kafkaBrokers, 'bank-core');
   const kafkaTransport = new KafkaTransport(kafka, [topics.paymentsCreated, topics.statusChanged, topics.antifraudDecisions]);
   kafkaTransport.warmUp();
   const rabbitTransport = new RabbitTransport(config.rabbitmqUrl as string, topics);
-  const publisher = startOutboxPublisher(pool, new RoutingTransport(kafkaTransport, rabbitTransport));
+  const publisher = startOutboxPublisher(pool, new RoutingTransport(kafkaTransport, rabbitTransport), {
+    clock,
+    onStatusChanged: reportStatusChange(bankMetrics),
+  });
   const deps = { pool, clock };
   const decisions = startKafkaConsumer({
     kafka,
@@ -62,7 +71,20 @@ export async function runCore(config: Config): Promise<void> {
       });
   }, REVIEW_SWEEP_INTERVAL_MS);
 
-  const app = buildApp({ pool, clock, contract: loadContract(OPENAPI_PATH), lookupRecipient: gateway.lookup, kitSecret: config.kitSecret, readiness });
+  const afterReset = async (): Promise<void> => {
+    bankMetrics.reset();
+    await clearKafkaTopics(kafka, clearedTopics(topics));
+  };
+  const app = buildApp({
+    pool,
+    clock,
+    contract: loadContract(OPENAPI_PATH),
+    lookupRecipient: gateway.lookup,
+    kitSecret: config.kitSecret,
+    readiness,
+    metrics: bankMetrics,
+    afterReset,
+  });
   const server: Server = app.listen(config.port, '0.0.0.0', () => logger.info('bank core started', { port: config.port }));
   onShutdown(async () => {
     clearInterval(sweeper);

@@ -1,10 +1,19 @@
 import type { Pool } from 'pg';
+import type { BankClock } from '../clock/bank-clock';
 import { withTransaction } from '../db/pool';
+import { insertDefectMarks, loadActiveDefects } from '../defects/defects.repository';
 import { logger } from '../shared/logger';
+import { DUPLICATE_DELIVERY, duplicateDeliveryMark, shouldDeliverTwice } from './duplicate-delivery';
 import { claimOutboxBatch, markOutboxFailed, markOutboxPublished, type OutboxRecord } from './outbox.repository';
+import { isStatusChangedRecord, observeStatusChange, type StatusObservation } from './status-observation';
 
 export interface EventTransport {
   send(record: OutboxRecord): Promise<void>;
+}
+
+export interface PublishOptions {
+  clock?: BankClock;
+  onStatusChanged?: (observation: StatusObservation) => void;
 }
 
 const BATCH_SIZE = 50;
@@ -15,15 +24,24 @@ export interface PublishResult {
   failed: boolean;
 }
 
-export async function publishPending(pool: Pool, transport: EventTransport): Promise<PublishResult> {
-  return withTransaction(pool, async (tx) => {
+export async function publishPending(pool: Pool, transport: EventTransport, options: PublishOptions = {}): Promise<PublishResult> {
+  const observations: StatusObservation[] = [];
+  const result = await withTransaction(pool, async (tx) => {
     const batch = await claimOutboxBatch(tx, BATCH_SIZE);
-    const result: PublishResult = { published: 0, failed: false };
+    const outcome: PublishResult = { published: 0, failed: false };
+    const repeating = batch.some(shouldDeliverTwice) && (await loadActiveDefects(tx)).has(DUPLICATE_DELIVERY);
     for (const record of batch) {
+      let sent = false;
       try {
         await transport.send(record);
+        if (repeating && shouldDeliverTwice(record)) {
+          await transport.send(record);
+          const payload = record.payload as { operationId: string };
+          await insertDefectMarks(tx, payload.operationId, [duplicateDeliveryMark(record)], options.clock?.now() ?? new Date());
+        }
         await markOutboxPublished(tx, record.id);
-        result.published += 1;
+        outcome.published += 1;
+        sent = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await markOutboxFailed(tx, record.id, message);
@@ -34,19 +52,30 @@ export async function publishPending(pool: Pool, transport: EventTransport): Pro
           requestId: record.headers.requestId,
           error: message,
         });
-        result.failed = true;
+        outcome.failed = true;
         break;
       }
+      if (sent && options.onStatusChanged && isStatusChangedRecord(record)) {
+        const observation = await observeStatusChange(tx, record);
+        if (observation) observations.push(observation);
+      }
     }
-    return result;
+    return outcome;
   });
+  for (const observation of observations) options.onStatusChanged?.(observation);
+  return result;
 }
 
 export interface BackgroundLoop {
   stop(): Promise<void>;
 }
 
-export function startOutboxPublisher(pool: Pool, transport: EventTransport, intervalMs = 250): BackgroundLoop {
+export interface PublisherOptions extends PublishOptions {
+  intervalMs?: number;
+}
+
+export function startOutboxPublisher(pool: Pool, transport: EventTransport, options: PublisherOptions = {}): BackgroundLoop {
+  const intervalMs = options.intervalMs ?? 250;
   let stopped = false;
   let running: Promise<void> = Promise.resolve();
   const tick = async (): Promise<void> => {
@@ -54,7 +83,7 @@ export function startOutboxPublisher(pool: Pool, transport: EventTransport, inte
     while (!stopped) {
       let idleMs = 0;
       try {
-        const result = await publishPending(pool, transport);
+        const result = await publishPending(pool, transport, options);
         failures = result.failed ? failures + 1 : 0;
         if (result.failed) idleMs = Math.min(MAX_BACKOFF_MS, intervalMs * 2 ** failures);
         else if (result.published === 0) idleMs = intervalMs;

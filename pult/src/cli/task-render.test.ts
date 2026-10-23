@@ -39,9 +39,9 @@ const outcome = (overrides: Partial<CheckOutcome['result']> = {}): CheckOutcome 
 
 describe('renderOutcome', () => {
   it('печатает пункты, подсказку к невыполненному и итог', () => {
-    const text = renderOutcome('Очередь согласования', 'k7f3qa', outcome()).map(stripAnsi);
+    const text = renderOutcome('Очередь согласования', outcome()).map(stripAnsi);
     assert.deepEqual(text, [
-      'Очередь согласования · метка k7f3qa',
+      'Очередь согласования',
       '✓ Обменник k7f3qa.docs типа topic',
       '✗ Отклонённый документ попал в dead-letter',
       '  Подсказка: у очереди нет аргумента x-dead-letter-exchange',
@@ -51,11 +51,10 @@ describe('renderOutcome', () => {
   });
 
   it('зачёт и «проверка не состоялась» различаются', () => {
-    const passed = renderOutcome('Т', 'abc123', outcome({ passed: true, summary: { passed: 4, total: 4 }, assertionResults: [] })).map(stripAnsi);
+    const passed = renderOutcome('Т', outcome({ passed: true, summary: { passed: 4, total: 4 }, assertionResults: [] })).map(stripAnsi);
     assert.equal(passed.at(-1), 'Итог: зачтено, 4 из 4.');
     const broken = renderOutcome(
       'Т',
-      'abc123',
       outcome({ unavailable: true, message: 'Проверка не состоялась: пульт не смог собрать факты', detail: 'RabbitMQ не отвечает', assertionResults: [{ id: 'a1', title: 'Обменник', passed: false, unavailable: true, hint: null, detail: 'RabbitMQ не отвечает' }] }),
     ).map(stripAnsi);
     assert.ok(broken.includes('? Обменник'));
@@ -66,7 +65,6 @@ describe('renderOutcome', () => {
   it('сбой проверки моделью не отправляет проверять стенды', () => {
     const text = renderOutcome(
       'Т',
-      'abc123',
       outcome({ unavailable: true, reviewUnavailable: true, message: 'Не удалось посмотреть работу', detail: 'тайм-аут' }),
     ).map(stripAnsi);
     assert.ok(text.includes('Не удалось посмотреть работу'));

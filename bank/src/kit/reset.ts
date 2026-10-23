@@ -51,7 +51,13 @@ async function resetOnce(deps: { pool: Pool; clock: BankClock }): Promise<void> 
   await seedIfEmpty(deps.pool, deps.clock);
 }
 
-export async function resetBank(deps: { pool: Pool; clock: BankClock }): Promise<void> {
+export interface ResetDeps {
+  pool: Pool;
+  clock: BankClock;
+  afterReset?: () => Promise<void>;
+}
+
+export async function resetBank(deps: ResetDeps): Promise<void> {
   await retryOnConflict(() => resetOnce(deps), {
     onRetry: (error, attempt) => {
       logger.warn('bank reset conflicted with background work, retrying', {
@@ -60,4 +66,5 @@ export async function resetBank(deps: { pool: Pool; clock: BankClock }): Promise
       });
     },
   });
+  await deps.afterReset?.();
 }

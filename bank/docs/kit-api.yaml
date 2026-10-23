@@ -47,7 +47,7 @@ paths:
       operationId: kitReset
       summary: Сбросить данные к сиду
       description: |
-        Удаляет операции, проводки, уведомления, ключи повтора, сеансы, журнал запросов и события на отправку, заново создаёт клиентов, счета и историю как при первом запуске, возвращает тарифы и пороги антифрода по умолчанию, очищает сценарий (метка пуста, сбои выключены, СБП в режиме NORMAL, часы банка идут по реальному времени). Старые токены клиентов и операторов перестают действовать. Номера операций начинаются заново.
+        Удаляет операции, проводки, уведомления, ключи повтора, сеансы, журнал запросов и события на отправку, заново создаёт клиентов, счета и историю как при первом запуске, возвращает тарифы и пороги антифрода по умолчанию, очищает сценарий (метка пуста, сбои выключены, СБП в режиме NORMAL, часы банка идут по реальному времени). Старые токены клиентов и операторов перестают действовать. Номера операций начинаются заново. Топики банка в Kafka (`bank.payments.created`, `bank.payments.status-changed`, `bank.antifraud.decisions`) очищаются до текущего конца, счётчики метрик `/metrics` обнуляются.
       responses:
         '200':
           description: Сброс выполнен
@@ -57,6 +57,8 @@ paths:
                 $ref: '#/components/schemas/ResetDone'
         '404':
           $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/KafkaUnavailable'
   /_kit/actions/transfer:
     post:
       operationId: kitTransfer
@@ -258,6 +260,24 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+  /_kit/facts/clock:
+    get:
+      operationId: kitClock
+      summary: Текущее время банка
+      responses:
+        '200':
+          description: Время банка и признак сдвига относительно настоящего
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [now, shifted]
+                properties:
+                  now:
+                    type: string
+                    format: date-time
+                  shifted:
+                    type: boolean
   /_kit/facts/tariffs/{code}:
     get:
       operationId: kitTariff
@@ -298,6 +318,12 @@ components:
             $ref: '#/components/schemas/Error'
     Unprocessable:
       description: Правило банка не позволило выполнить запрос
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    KafkaUnavailable:
+      description: Данные сброшены, но топики банка очистить не удалось (Kafka недоступна); сброс можно повторить
       content:
         application/json:
           schema:

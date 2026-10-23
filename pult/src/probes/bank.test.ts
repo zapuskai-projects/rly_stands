@@ -179,8 +179,27 @@ describe('время банка в сценарии', () => {
   it('noon — сегодняшний полдень по Москве; ISO-время и null идут как есть', () => {
     assert.equal(resolveBankTime('noon', new Date('2026-10-20T20:30:00Z')), '2026-10-20T12:00');
     assert.equal(resolveBankTime('noon', new Date('2026-10-20T21:30:00Z')), '2026-10-21T12:00');
+    for (const inherited of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      assert.equal(resolveBankTime(inherited, new Date('2026-10-20T21:30:00Z')), inherited);
+    }
     assert.equal(resolveBankTime('2026-10-21T23:40'), '2026-10-21T23:40');
     assert.equal(resolveBankTime(null), null);
     assert.equal(resolveBankTime(undefined), null);
+  });
+
+  it('noon и night со сдвигом в минутах: время идёт вперёд, сутки переходят', () => {
+    const now = new Date('2026-10-20T09:00:00Z');
+    assert.equal(resolveBankTime('noon+15m', now), '2026-10-20T12:15');
+    assert.equal(resolveBankTime('noon+0m', now), '2026-10-20T12:00');
+    assert.equal(resolveBankTime('night+30m', now), '2026-10-20T23:40');
+    assert.equal(resolveBankTime('night+70m', now), '2026-10-21T00:20');
+    assert.equal(resolveBankTime('2026-10-20T08:00+5m', now), '2026-10-20T08:00+5m');
+    assert.equal(resolveBankTime('midnight+5m', now), 'midnight+5m');
+  });
+
+  it('night — сегодняшние 23:10 по Москве; после полуночи по Москве наступает следующий день', () => {
+    assert.equal(resolveBankTime('night', new Date('2026-10-20T20:30:00Z')), '2026-10-20T23:10');
+    assert.equal(resolveBankTime('night', new Date('2026-10-20T21:30:00Z')), '2026-10-21T23:10');
+    assert.equal(resolveBankTime('night', new Date('2026-10-20T09:00:00Z')), '2026-10-20T23:10');
   });
 });

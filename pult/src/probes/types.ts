@@ -5,6 +5,7 @@ export type ProbeContext = {
   label: string;
   dataDir?: string;
   results?: Record<string, Record<string, unknown>>;
+  observations?: Record<string, unknown>;
   saveReport?: ReportSaver;
 };
 

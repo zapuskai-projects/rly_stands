@@ -66,6 +66,7 @@ describe('служебный API банка совпадает с kit-api.yaml',
     conforms('kitCheckClient', await h.kit('POST', '/_kit/actions/check-client', { balanceKop: -1 }));
     conforms('kitTariff', await h.kit('GET', '/_kit/facts/tariffs/START'));
     conforms('kitTariff', await h.kit('GET', '/_kit/facts/tariffs/GOLD'));
+    conforms('kitClock', await h.kit('GET', '/_kit/facts/clock'));
 
     const review = { operationId: pick(created.body, 'operationId'), decision: 'APPROVE', comment: 'Подтверждено' };
     conforms('kitReview', await h.kit('POST', '/_kit/actions/review', review), review);
@@ -95,6 +96,7 @@ describe('служебный API банка совпадает с kit-api.yaml',
     assert.deepEqual(
       contract.operations.map((item) => `${item.method.toUpperCase()} ${item.openApiPath}`).sort(),
       [
+        'GET /_kit/facts/clock',
         'GET /_kit/facts/ledger',
         'GET /_kit/facts/operations',
         'GET /_kit/facts/operations/{idOrNumber}',
