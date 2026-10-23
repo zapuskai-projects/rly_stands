@@ -15,7 +15,8 @@ env:
 
 jobs:
   images:
-    runs-on: ubuntu-latest
+    # Все на Mac с M-чипами: собираем только arm64 и на ARM-сервере, без эмулятора.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +28,6 @@ jobs:
             exit 1
           fi
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -40,6 +40,10 @@ jobs:
         run: |
           while read -r source target; do
             case "$source" in ''|'#'*) continue ;; esac
+            if docker buildx imagetools inspect "$REGISTRY/$OWNER/mirror/$target" >/dev/null 2>&1; then
+              echo "уже в зеркале: $target"
+              continue
+            fi
             docker buildx imagetools create --tag "$REGISTRY/$OWNER/mirror/$target" "$source"
           done < images/mirror.txt
 
@@ -51,22 +55,28 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: pult
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/stands-kit-pult:${{ steps.version.outputs.value }}
+          cache-from: type=gha,scope=pult
+          cache-to: type=gha,mode=max,scope=pult
 
       - name: Linux-сервер для тестировщика
         uses: docker/build-push-action@v6
         with:
           context: images/linux-server
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/stands-kit-linux:${{ steps.version.outputs.value }}
+          cache-from: type=gha,scope=linux
+          cache-to: type=gha,mode=max,scope=linux
 
       - name: Учебный банк
         uses: docker/build-push-action@v6
         with:
           context: bank
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/stands-kit-bank:${{ steps.version.outputs.value }}
+          cache-from: type=gha,scope=bank
+          cache-to: type=gha,mode=max,scope=bank
