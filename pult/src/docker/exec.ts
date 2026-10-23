@@ -16,12 +16,13 @@ export function run(command: string, args: string[], options: ExecOptions = {}):
         maxBuffer: 16 * 1024 * 1024,
       },
       (error, stdout, stderr) => {
-        const code =
-          error && typeof (error as NodeJS.ErrnoException & { code?: unknown }).code === 'number'
-            ? ((error as { code: number }).code)
-            : error
-              ? 1
-              : 0;
+        const errorCode = (error as NodeJS.ErrnoException & { code?: unknown } | null)?.code;
+        // Нет такой программы — 127, как в оболочке: проверки отличают «нет утилиты» от её ошибки.
+        if (errorCode === 'ENOENT') {
+          resolve({ code: 127, stdout: '', stderr: `${command}: not found` });
+          return;
+        }
+        const code = typeof errorCode === 'number' ? errorCode : error ? 1 : 0;
         resolve({ code, stdout: String(stdout), stderr: String(stderr) });
       },
     );
