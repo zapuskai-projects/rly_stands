@@ -198,7 +198,10 @@ components:
           description: Номер клиента, он же ключ сообщения
         type:
           type: string
-          enum: [OWN_TRANSFER, PHONE_TRANSFER]
+          enum: [OWN_TRANSFER, PHONE_TRANSFER, QR_PAYMENT, QR_REFUND]
+          x-release-values:
+            QR_PAYMENT: '1.2'
+            QR_REFUND: '1.2'
         route:
           type: string
           enum: [INTERNAL, SBP]
@@ -223,6 +226,11 @@ components:
           format: uuid
           x-release: '1.1'
           description: Шаблон, по которому создана операция, `null` у обычных переводов
+        qrId:
+          type: [string, 'null']
+          format: uuid
+          x-release: '1.2'
+          description: QR-код, по которому создана операция, `null` у переводов
         createdAt:
           type: string
           format: date-time

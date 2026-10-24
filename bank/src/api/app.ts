@@ -3,8 +3,8 @@ import type { Pool } from 'pg';
 import type { BankClock } from '../clock/bank-clock';
 import type { RecipientNameLookup } from '../sbp/gateway';
 import type { Readiness } from '../shared/readiness';
-import type { Contract } from './contract';
-import { DOCS_DIR, WEB_DIR } from '../config';
+import { loadContract, type Contract } from './contract';
+import { DOCS_DIR, PARTNER_OPENAPI_PATH, WEB_DIR } from '../config';
 import { mountKit } from '../kit/routes';
 import type { BankMetrics } from '../metrics/bank-metrics';
 import { mountMetrics } from '../metrics/route';
@@ -21,6 +21,8 @@ import { officeAuthHandlers } from './handlers/office-auth';
 import { officeClientHandlers } from './handlers/office-clients';
 import { officeOperationHandlers } from './handlers/office-operations';
 import { officeSettingsHandlers } from './handlers/office-settings';
+import { partnerHandlers } from './handlers/partner';
+import { qrPaymentHandlers } from './handlers/qr-payments';
 import { recipientHandlers } from './handlers/recipients';
 import { referenceHandlers } from './handlers/reference';
 import { templateHandlers } from './handlers/templates';
@@ -32,6 +34,7 @@ export interface AppDeps {
   pool: Pool;
   clock: BankClock;
   contract: Contract;
+  partnerContract?: Contract;
   lookupRecipient: RecipientNameLookup;
   kitSecret?: string | null;
   readiness?: Readiness;
@@ -39,7 +42,7 @@ export interface AppDeps {
   afterReset?: () => Promise<void>;
 }
 
-export function buildApp({ pool, clock, contract, lookupRecipient, kitSecret = null, readiness, metrics, afterReset }: AppDeps): Express {
+export function buildApp({ pool, clock, contract, partnerContract = loadContract(PARTNER_OPENAPI_PATH), lookupRecipient, kitSecret = null, readiness, metrics, afterReset }: AppDeps): Express {
   const app = express();
   app.disable('x-powered-by');
   app.use(requestContext(clock, pool));
@@ -56,14 +59,15 @@ export function buildApp({ pool, clock, contract, lookupRecipient, kitSecret = n
     contract,
     {
       ...authHandlers({ pool, clock }),
-      ...accountHandlers({ pool, clock }),
+      ...accountHandlers({ pool, clock, releases }),
       ...transferHandlers({ pool, clock, lookupRecipient, releases }),
       ...templateHandlers({ pool, clock, lookupRecipient, releases }),
       ...autopaymentHandlers({ pool, clock, lookupRecipient }),
+      ...qrPaymentHandlers({ pool, clock, releases }),
       ...recipientHandlers({ pool, lookupRecipient }),
-      ...officeHandlers({ pool, clock }),
+      ...officeHandlers({ pool, clock, releases }),
       ...officeAuthHandlers(pool),
-      ...officeClientHandlers({ pool, clock }),
+      ...officeClientHandlers({ pool, clock, releases }),
       ...officeOperationHandlers(pool, releases),
       ...officeSettingsHandlers(pool),
       ...referenceHandlers(pool, releases, readiness),
@@ -71,6 +75,7 @@ export function buildApp({ pool, clock, contract, lookupRecipient, kitSecret = n
     { pool, clock },
     releases,
   );
+  registerOperations(app, partnerContract, partnerHandlers({ pool, clock }), { pool, clock }, releases);
   mountWeb(app, WEB_DIR);
   app.use(notFoundHandler);
   app.use(errorHandler);

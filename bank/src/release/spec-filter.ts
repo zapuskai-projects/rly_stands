@@ -4,6 +4,7 @@ import { parseRelease, releaseAtLeast, type Release } from './release';
 type Json = Record<string, unknown>;
 
 const MARK = 'x-release';
+const VALUES_MARK = 'x-release-values';
 const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'];
 const COMPONENT_REF = /^#\/components\/([^/]+)\/([^/]+)/;
 
@@ -29,7 +30,18 @@ function cut(node: unknown, current: Release): unknown {
     const hidden = Object.entries(node.properties).filter(([, value]) => isHidden(value, current)).map(([name]) => name);
     result.required = result.required.filter((name) => !hidden.includes(String(name)));
   }
+  cutEnumValues(node, result, current);
   return result;
+}
+
+function cutEnumValues(node: Json, result: Json, current: Release): void {
+  const marks = node[VALUES_MARK];
+  if (!isObject(marks) || !Array.isArray(result.enum)) return;
+  const shown = Object.entries(marks).filter(([, release]) => releaseAtLeast(current, parseRelease(String(release), VALUES_MARK)));
+  const hidden = Object.keys(marks).filter((value) => !shown.some(([name]) => name === value));
+  result.enum = result.enum.filter((value) => !hidden.includes(String(value)));
+  if (shown.length === 0) delete result[VALUES_MARK];
+  else result[VALUES_MARK] = Object.fromEntries(shown);
 }
 
 function dropEmptyPaths(original: Json, filtered: Json): void {

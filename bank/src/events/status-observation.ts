@@ -28,7 +28,7 @@ export async function observeStatusChange(db: Db, record: OutboxRecord): Promise
     [payload.operationId],
   );
   const operation = found.rows[0];
-  if (!operation) return null;
+  if (!operation || operation.type === 'QR_PAYMENT' || operation.type === 'QR_REFUND') return null;
   return {
     operationId: payload.operationId,
     operationNumber: payload.operationNumber,

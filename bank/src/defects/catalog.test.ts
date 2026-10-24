@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { DEFECT_CODES, isDefectCode, NO_DEFECTS, parseDefectCodes } from './catalog';
 
 describe('каталог сбоев сценария', () => {
-  it('в каталоге двенадцать кодов', () => {
+  it('в каталоге шестнадцать кодов', () => {
     assert.deepEqual([...DEFECT_CODES].sort(), [
       'autopay-no-retry',
       'commission-rounding',
@@ -13,10 +13,14 @@ describe('каталог сбоев сценария', () => {
       'kafka-amount-mismatch',
       'limit-boundary',
       'notify-before-complete',
+      'qr-double-payment',
+      'qr-expired-accepted',
+      'refund-over-amount',
       'regression-own-transfer-fee',
       'sbp-timeout-stuck',
       'template-ignores-amount',
       'template-skips-limit',
+      'webhook-no-retry',
     ]);
   });
 

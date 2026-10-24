@@ -154,6 +154,62 @@ export function pollFacts(requests: unknown[]) {
   };
 }
 
+export function qrTotals(qrCodes: unknown[]) {
+  const rows = qrCodes.map(asRecord);
+  const sum = (field: string) => rows.reduce((total, row) => total + num(row[field]), 0);
+  const withStatus = (...statuses: string[]) => rows.filter((row) => statuses.includes(str(row.status))).length;
+  return {
+    count: rows.length,
+    paidCount: rows.filter((row) => str(row.operationId) !== '').length,
+    refundedCount: withStatus('REFUNDED'),
+    partiallyRefundedCount: withStatus('PARTIALLY_REFUNDED'),
+    expiredCount: withStatus('EXPIRED'),
+    cancelledCount: withStatus('CANCELLED'),
+    totalAmountKop: sum('amountKop'),
+    totalCreditedKop: sum('creditedKop'),
+    totalCommissionKop: rows.filter((row) => str(row.operationId) !== '').reduce((total, row) => total + num(row.commissionKop), 0),
+    totalRefundedKop: sum('refundedKop'),
+  };
+}
+
+export function listFrom(body: unknown, key: string, what: string): unknown[] {
+  if (Array.isArray(body)) return body;
+  const list = asRecord(body)[key];
+  if (!Array.isArray(list)) throw new ProbeError(`Банк вернул ${what} в неожиданной форме: нет списка ${key}`);
+  return list;
+}
+
+export function deliveryRows(deliveries: unknown[]) {
+  return deliveries.map((item) => {
+    const row = asRecord(item);
+    const attempts = asArray(row.attempts).map(asRecord);
+    const times = attempts.map((attempt) => Date.parse(str(attempt.at)));
+    return {
+      ...row,
+      attemptCodes: attempts.map((attempt) => (attempt.statusCode == null ? str(attempt.error) : num(attempt.statusCode))),
+      defectCodes: asArray(row.defects).map((mark) => str(asRecord(mark).code)),
+      gapsSec: times.slice(1).map((time, index) => Math.round((time - (times[index] ?? time)) / 1000)),
+    };
+  });
+}
+
+export function deliveryTotals(deliveries: unknown[]) {
+  const rows = deliveries.map(asRecord);
+  const withStatus = (status: string) => rows.filter((row) => row.status === status).length;
+  const attemptsOf = (row: Record<string, unknown>) => num(row.attemptsMade);
+  return {
+    count: rows.length,
+    deliveredCount: withStatus('DELIVERED'),
+    failedCount: withStatus('FAILED'),
+    pendingCount: withStatus('PENDING'),
+    retriedCount: rows.filter((row) => attemptsOf(row) > 1).length,
+    maxAttempts: Math.max(0, ...rows.map(attemptsOf)),
+    paidEvents: rows.filter((row) => row.event === 'qr.paid').length,
+    refundedEvents: rows.filter((row) => row.event === 'qr.refunded').length,
+    defectiveCount: rows.filter((row) => asArray(row.defects).length > 0).length,
+  };
+}
+
 export const BANK_EXECUTORS: ExecutorTable = {
   'bank.operations': executor<{ label?: string; phone?: string; status?: string }>(async (params, ctx) => {
     const result = await call(ctx, 'GET', `/facts/operations${query(params)}`);
@@ -178,6 +234,28 @@ export const BANK_EXECUTORS: ExecutorTable = {
     return { ...autopaymentTotals(asArray(body.templates), autopayments), templates: asArray(body.templates), autopayments, runs: autopaymentRuns(autopayments) };
   }),
 
+  'bank.qrCodes': executor<{ label?: string; qrId?: string; orderId?: string }>(async (params, ctx) => {
+    const result = await call(ctx, 'GET', `/facts/qr${query(params)}`);
+    if (result.status === 404) {
+      await assertSecretAccepted(ctx);
+      throw new ProbeError('Оплата по QR доступна с релиза 1.2: включите его сценарием банка (release: 1.2)');
+    }
+    if (!result.ok) throw failure(MODULE, 'чтение QR-кодов', result);
+    const qrCodes = listFrom(result.json, 'qrCodes', 'QR-коды');
+    return { ...qrTotals(qrCodes), qrCodes };
+  }),
+
+  'bank.webhookDeliveries': executor<{ label?: string; qrId?: string; event?: string }>(async (params, ctx) => {
+    const result = await call(ctx, 'GET', `/facts/webhook-deliveries${query(params)}`);
+    if (result.status === 404) {
+      await assertSecretAccepted(ctx);
+      throw new ProbeError('Уведомления магазину доступны с релиза 1.2: включите его сценарием банка (release: 1.2)');
+    }
+    if (!result.ok) throw failure(MODULE, 'чтение журнала доставок', result);
+    const deliveries = deliveryRows(listFrom(result.json, 'deliveries', 'журнал доставок'));
+    return { ...deliveryTotals(deliveries), deliveries };
+  }),
+
   'bank.operation': executor<{ id: string }>(async ({ id }, ctx) => {
     const body = await fetchOperation(ctx, id);
     if (!body) {
@@ -199,6 +277,7 @@ export const BANK_EXECUTORS: ExecutorTable = {
     const result = await call(ctx, 'GET', `/facts/ledger${query({ account })}`);
     if (!result.ok) throw failure(MODULE, 'чтение главной книги', result);
     const body = asRecord(result.json);
+    if (!account && !Array.isArray(body.inconsistent)) throw new ProbeError('Банк вернул главную книгу в неожиданной форме: нет списка inconsistent');
     return { inconsistent: [], ...body };
   }),
 

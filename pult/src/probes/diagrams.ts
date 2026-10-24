@@ -62,6 +62,7 @@ export function sequenceFacts(source: string) {
     participantsText,
     messages,
     targetsText: messages.map((message) => message.toText).join('\n'),
+    flowText: messages.map((message) => `${message.fromText}: ${message.label} → ${message.toText}`).join('\n'),
     blocks,
     text: [participantsText, ...messages.map((message) => message.label), ...blocks.map((block) => block.text)].join('\n'),
   };
@@ -119,7 +120,7 @@ async function diagramProbe<T extends { syntaxErrors: string[] }>(
 
 export const DIAGRAM_EXECUTORS: ExecutorTable = {
   'plantuml.sequence': executor<{ file: string }>(({ file }, ctx) =>
-    diagramProbe(readWorkText(ctx, file), file, sequenceFacts, { participants: [], participantsText: '', messages: [], targetsText: '', blocks: [], text: '' }),
+    diagramProbe(readWorkText(ctx, file), file, sequenceFacts, { participants: [], participantsText: '', messages: [], targetsText: '', flowText: '', blocks: [], text: '' }),
   ),
 
   'plantuml.class': executor<{ file: string }>(({ file }, ctx) =>

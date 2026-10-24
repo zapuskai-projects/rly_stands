@@ -18,7 +18,7 @@ const createdSchema = z.object({
   operationId: z.string().uuid(),
   operationNumber: z.string(),
   clientNumber: z.string(),
-  type: z.enum(['OWN_TRANSFER', 'PHONE_TRANSFER']),
+  type: z.enum(['OWN_TRANSFER', 'PHONE_TRANSFER', 'QR_PAYMENT', 'QR_REFUND']),
   amount: z.number().positive(),
 });
 

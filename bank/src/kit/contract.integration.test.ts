@@ -3,6 +3,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { loadContract, type Contract } from '../api/contract';
 import { DOCS_DIR } from '../config';
+import { LAVKA_PARTNER_KEY } from '../partners/partner-key';
 import { KIT_TEST_SECRET, pick, startHarness, type ApiResponse, type Harness } from '../testing/harness';
 import { NOON_MOSCOW, PHONES } from '../testing/scenarios';
 
@@ -113,6 +114,32 @@ describe('служебный API банка совпадает с kit-api.yaml',
     conforms('kitOperations', await h.kit('GET', '/_kit/facts/operations?label=task-6%3Aauto'));
   });
 
+  it('маршруты релиза 1.2 отвечают по описанию: 404 до релиза, после него факты по QR и доставкам, неверные запросы', async () => {
+    conforms('kitQrCodes', await h.kit('GET', '/_kit/facts/qr'));
+    conforms('kitWebhookDeliveries', await h.kit('GET', '/_kit/facts/webhook-deliveries'));
+    await h.pool.query("UPDATE scenario SET release = '1.2' WHERE id = 1");
+    const key = { 'X-Partner-Key': LAVKA_PARTNER_KEY };
+    await h.api(null, 'PUT', '/partner/v1/webhook', { url: 'http://host.docker.internal:8080/hook', secret: 'secret' }, key);
+    const qr = await h.api(null, 'POST', '/partner/v1/qr', { orderId: 'kit-order-1', amount: 100_000, description: 'Заказ' }, key);
+    const token = await h.login(ANNA);
+    const account = (pick((await h.api(token, 'GET', '/api/v1/accounts')).body, 'items') as { id: string }[])[0];
+    await h.api(token, 'POST', '/api/v1/qr-payments', { payload: pick(qr.body, 'payload'), accountId: account?.id }, { 'Idempotency-Key': 'kit-pay-0001' });
+    await h.drain();
+    await h.api(null, 'POST', `/partner/v1/qr/${String(pick(qr.body, 'qrId'))}/refunds`, { amount: 30_000 }, { ...key, 'Idempotency-Key': 'kit-refund-0001' });
+    await h.dispatchWebhooks();
+    const facts = await h.kit('GET', '/_kit/facts/qr');
+    conforms('kitQrCodes', facts);
+    assert.deepEqual((facts.body as { refundedKop: number; creditedKop: number; payerPhone: string }[]).map((item) => [item.refundedKop, item.creditedKop, item.payerPhone]), [[30_000, 99_300, ANNA]]);
+    conforms('kitQrCodes', await h.kit('GET', `/_kit/facts/qr?qrId=${String(pick(qr.body, 'qrId'))}`));
+    conforms('kitQrCodes', await h.kit('GET', '/_kit/facts/qr?orderId=нет'));
+    conforms('kitQrCodes', await h.kit('GET', '/_kit/facts/qr?qrId=x'));
+    const deliveries = await h.kit('GET', '/_kit/facts/webhook-deliveries');
+    conforms('kitWebhookDeliveries', deliveries);
+    assert.deepEqual((deliveries.body as { event: string; status: string }[]).map((item) => [item.event, item.status]), [['qr.paid', 'DELIVERED'], ['qr.refunded', 'DELIVERED']]);
+    conforms('kitWebhookDeliveries', await h.kit('GET', '/_kit/facts/webhook-deliveries?event=qr.refunded'));
+    conforms('kitWebhookDeliveries', await h.kit('GET', '/_kit/facts/webhook-deliveries?event=нет'));
+  });
+
   it('описание содержит ровно маршруты банка', () => {
     assert.deepEqual(
       contract.operations.map((item) => `${item.method.toUpperCase()} ${item.openApiPath}`).sort(),
@@ -122,8 +149,10 @@ describe('служебный API банка совпадает с kit-api.yaml',
         'GET /_kit/facts/ledger',
         'GET /_kit/facts/operations',
         'GET /_kit/facts/operations/{idOrNumber}',
+        'GET /_kit/facts/qr',
         'GET /_kit/facts/requests',
         'GET /_kit/facts/tariffs/{code}',
+        'GET /_kit/facts/webhook-deliveries',
         'POST /_kit/actions/autopay-run',
         'POST /_kit/actions/check-client',
         'POST /_kit/actions/review',
@@ -135,9 +164,10 @@ describe('служебный API банка совпадает с kit-api.yaml',
     );
   });
 
-  it('маршруты релиза 1.1 помечены в описании служебного API', () => {
-    const marked = contract.operations.filter((item) => item.release === '1.1').map((item) => item.operationId).sort();
-    assert.deepEqual(marked, ['kitAutopayRun', 'kitAutopayments']);
+  it('маршруты релизов 1.1 и 1.2 помечены в описании служебного API', () => {
+    const marked = (release: string) => contract.operations.filter((item) => item.release === release).map((item) => item.operationId).sort();
+    assert.deepEqual(marked('1.1'), ['kitAutopayRun', 'kitAutopayments']);
+    assert.deepEqual(marked('1.2'), ['kitQrCodes', 'kitWebhookDeliveries']);
   });
 
   it('служебные маршруты и их описание не видны ни в документации, ни в публичном контракте', async () => {

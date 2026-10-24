@@ -12,6 +12,7 @@ import {
 import type { OperationStatus } from '../../payments/status';
 import type { TransferCommand } from '../../payments/transfer-command';
 import { createTransfer } from '../../payments/transfer.service';
+import { hiddenOperationTypes } from '../../release/release';
 import type { ReleaseSource } from '../../release/release-source';
 import type { RecipientNameLookup } from '../../sbp/gateway';
 import { BANK } from '../../shared/bank-identity';
@@ -73,11 +74,12 @@ function toFilter(query: Record<string, unknown>): OperationFilter {
   return filter;
 }
 
-async function loadOperationDto(pool: Pool, releases: ReleaseSource, clientId: string, operationId: string) {
-  const operation = await findClientOperation(pool, clientId, operationId);
+export async function loadOperationDto(pool: Pool, releases: ReleaseSource, clientId: string, operationId: string) {
+  const release = await releases.current();
+  const operation = await findClientOperation(pool, clientId, operationId, hiddenOperationTypes(release));
   if (!operation) throw notFound('OPERATION_NOT_FOUND', 'Операция не найдена');
   const histories = await loadStatusHistories(pool, [operation.id]);
-  return operationDto(operation, histories.get(operation.id) ?? [], await releases.atLeast('1.1'));
+  return operationDto(operation, histories.get(operation.id) ?? [], release);
 }
 
 export function transferHandlers({ pool, clock, lookupRecipient, releases }: Deps): Record<string, Handler> {
@@ -106,10 +108,11 @@ export function transferHandlers({ pool, clock, lookupRecipient, releases }: Dep
       const clientId = clientIdOf(ctx);
       const limit = (ctx.query.limit as number | undefined) ?? DEFAULT_PAGE_SIZE;
       const offset = (ctx.query.offset as number | undefined) ?? 0;
-      const { rows, total } = await listClientOperations(pool, clientId, toFilter(ctx.query), limit, offset);
+      const release = await releases.current();
+      const filter = { ...toFilter(ctx.query), excludeTypes: hiddenOperationTypes(release) };
+      const { rows, total } = await listClientOperations(pool, clientId, filter, limit, offset);
       const histories = await loadStatusHistories(pool, rows.map((row) => row.id));
-      const withTemplate = await releases.atLeast('1.1');
-      const items = rows.map((row) => operationDto(row, histories.get(row.id) ?? [], withTemplate));
+      const items = rows.map((row) => operationDto(row, histories.get(row.id) ?? [], release));
       return { status: 200, body: { items, total, limit, offset } };
     },
     getOperation: async (ctx) => {

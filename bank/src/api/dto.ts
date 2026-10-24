@@ -5,6 +5,7 @@ import { toMoscowIso } from '../clock/moscow';
 import type { Client } from '../clients/clients.repository';
 import { describeRule } from '../antifraud/scoring';
 import type { OperationRecord, StatusHistoryRecord } from '../payments/operations.repository';
+import { releaseAtLeast, type Release } from '../release/release';
 import type { ReviewItem } from '../review/review.repository';
 import type { Tariff } from '../tariffs/tariff';
 
@@ -97,7 +98,7 @@ export const statementDto = (account: Account, from: string, to: string, data: S
   })),
 });
 
-export const operationDto = (operation: OperationRecord, history: readonly StatusHistoryRecord[], withTemplate = false) => ({
+export const operationDto = (operation: OperationRecord, history: readonly StatusHistoryRecord[], release: Release = '1.0') => ({
   id: operation.id,
   number: operation.number,
   type: operation.type,
@@ -116,7 +117,8 @@ export const operationDto = (operation: OperationRecord, history: readonly Statu
     displayName: operation.recipientName,
   },
   comment: operation.comment,
-  ...(withTemplate ? { templateId: operation.templateId } : {}),
+  ...(releaseAtLeast(release, '1.1') ? { templateId: operation.templateId } : {}),
+  ...(releaseAtLeast(release, '1.2') ? { qrId: operation.qrId } : {}),
   rejection: operation.rejectCode ? { code: operation.rejectCode, message: operation.rejectMessage ?? '' } : null,
   createdAt: toMoscowIso(operation.createdAt),
   updatedAt: toMoscowIso(operation.updatedAt),

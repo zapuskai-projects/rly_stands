@@ -8,6 +8,12 @@ import { retryOnConflict } from '../shared/retry';
 import { restoreDefaultTariffs } from './tariffs';
 
 const CLIENT_DATA_TABLES = [
+  'webhook_delivery_marks',
+  'webhook_attempts',
+  'webhook_deliveries',
+  'qr_refunds',
+  'qr_codes',
+  'partners',
   'autopayment_run_marks',
   'autopayment_runs',
   'autopayments',

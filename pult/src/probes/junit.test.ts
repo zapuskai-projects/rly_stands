@@ -71,6 +71,12 @@ describe('junit: факты по отчётам', () => {
     assert.deepEqual(facts.failedNames, ['test_daily_limit[exact-COMPLETED]', 'tests.test_limit.test_daily_limit[exact-COMPLETED]']);
   });
 
+  it('имена прошедших тестов одним текстом: упавшие и пропущенные в него не входят', () => {
+    const facts = junitFacts(['pytest.xml'], pytest, []);
+    assert.equal(facts.passedNamesText.split('\n').length, 3);
+    assert.ok(!facts.passedNamesText.includes('exact-COMPLETED'));
+  });
+
   it('параметризованные строки собираются в группу по имени до [ или (', () => {
     const facts = junitFacts(['pytest.xml'], pytest, []);
     assert.equal(facts.maxGroupSize, 3);

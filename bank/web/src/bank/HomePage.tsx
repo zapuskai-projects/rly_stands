@@ -50,6 +50,11 @@ export function HomePage() {
               Между своими счетами
             </Link>
           ) : null}
+          {releaseAtLeast(release, '1.2') ? (
+            <Link to="/qr" className="btn" data-testid="quick-qr">
+              Оплатить по QR
+            </Link>
+          ) : null}
           <Link to="/statement" className="btn" data-testid="quick-statement">
             Выписка
           </Link>

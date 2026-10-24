@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { OPENAPI_PATH } from '../config';
+import { OPENAPI_PATH, PARTNER_OPENAPI_PATH } from '../config';
 import { PROBE_OPENAPI } from '../testing/release-spec';
 import { loadContract, parseContract, type OperationSpec } from './contract';
 
@@ -115,6 +115,62 @@ describe('операции релиза 1.1 в контракте', () => {
     assert.equal(spec.body?.required, false);
     assert.equal(spec.body?.validator.validate({ amount: 0 }).ok, false);
     assert.equal(spec.body?.validator.validate({ amount: 100, comment: 'за июнь' }).ok, true);
+  });
+});
+
+describe('операции релиза 1.2 в контракте', () => {
+  it('оплата по QR помечена релизом 1.2 и защищена токеном клиента', () => {
+    const marked = contract.operations.filter((item) => item.release === '1.2');
+    assert.deepEqual(marked.map((item) => item.operationId).sort(), ['createQrPayment', 'lookupQrPayment']);
+    assert.ok(marked.every((item) => item.auth === 'CLIENT'));
+  });
+
+  it('оплата требует ключ повтора, содержимое QR и счёт', () => {
+    const spec = operation('createQrPayment');
+    assert.equal(spec.params.find((param) => param.name === 'Idempotency-Key')?.required, true);
+    const body = spec.body?.validator;
+    const accountId = '0b2f4a5e-1c3d-4e5f-8a9b-0c1d2e3f4a5b';
+    assert.equal(body?.validate({ payload: 'zbqr://pay?id=7b0c5d12-3a4e-4f6a-9d21-5c8e1f0a2b34', accountId }).ok, true);
+    assert.equal(body?.validate({ payload: '', accountId }).ok, false);
+    assert.equal(body?.validate({ payload: 'zbqr://pay?id=x', accountId: 'не-идентификатор' }).ok, false);
+    assert.equal(body?.validate({ payload: 'zbqr://pay?id=x' }).ok, false);
+    assert.equal(body?.validate({ payload: 'zbqr://pay?id=x', accountId, extra: 1 }).ok, false);
+  });
+});
+
+describe('партнёрский контракт', () => {
+  const partner = loadContract(PARTNER_OPENAPI_PATH);
+  const partnerOperation = (id: string): OperationSpec => partner.operations.find((item) => item.operationId === id) as OperationSpec;
+
+  it('все операции помечены релизом 1.2 и защищены ключом магазина', () => {
+    assert.deepEqual(partner.operations.map((item) => item.operationId).sort(), ['cancelPartnerQr', 'createPartnerQr', 'createPartnerQrRefund', 'getPartnerQr', 'listPartnerWebhookDeliveries', 'setPartnerWebhook']);
+    assert.ok(partner.operations.every((item) => item.release === '1.2' && item.auth === 'PARTNER'));
+    assert.equal(partnerOperation('getPartnerQr').expressPath, '/partner/v1/qr/:qrId');
+  });
+
+  it('возврат требует ключ повтора и сумму, настройка уведомлений — адрес и секрет', () => {
+    const refund = partnerOperation('createPartnerQrRefund');
+    assert.equal(refund.params.find((param) => param.name === 'Idempotency-Key')?.required, true);
+    assert.equal(refund.body?.validator.validate({ amount: 1 }).ok, true);
+    for (const body of [{}, { amount: 0 }, { amount: 1.5 }, { amount: 100_000_001 }, { amount: 1, extra: 1 }]) {
+      assert.equal(refund.body?.validator.validate(body).ok, false, JSON.stringify(body));
+    }
+    const webhook = partnerOperation('setPartnerWebhook').body?.validator;
+    assert.equal(webhook?.validate({ url: 'http://host.docker.internal:8080/h', secret: 's' }).ok, true);
+    for (const body of [{ url: 'http://x' }, { secret: 's' }, { url: '', secret: 's' }, { url: 'http://x', secret: '' }, { url: 'http://x', secret: 's', extra: 1 }]) {
+      assert.equal(webhook?.validate(body).ok, false, JSON.stringify(body));
+    }
+  });
+
+  it('выставление QR принимает заказ, срок от 60 до 3600 и отвергает остальное', () => {
+    const body = partnerOperation('createPartnerQr').body?.validator;
+    const order = { orderId: 'order-1', amount: 1000, description: 'Заказ' };
+    assert.equal(body?.validate(order).ok, true);
+    assert.equal(body?.validate({ ...order, ttlSeconds: 60 }).ok, true);
+    assert.equal(body?.validate({ ...order, ttlSeconds: 3600 }).ok, true);
+    for (const patch of [{ ttlSeconds: 59 }, { ttlSeconds: 3601 }, { amount: 0 }, { amount: 100_000_001 }, { amount: 1.5 }, { orderId: 'с пробелом' }, { description: '' }, { extra: 1 }]) {
+      assert.equal(body?.validate({ ...order, ...patch }).ok, false, JSON.stringify(patch));
+    }
   });
 });
 

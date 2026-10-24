@@ -6,6 +6,7 @@ import { postEntries } from '../accounts/ledger';
 import type { BankClock } from '../clock/bank-clock';
 import { insertClient } from '../clients/clients.repository';
 import { withTransaction, type Db } from '../db/pool';
+import { ensureLavkaPartner } from '../partners/partners.repository';
 import { BANK } from '../shared/bank-identity';
 import { logger } from '../shared/logger';
 import { insertOperator } from '../operators/operators.repository';
@@ -45,8 +46,11 @@ export async function seedIfEmpty(pool: Pool, clock: BankClock): Promise<boolean
   return withTransaction(pool, async (tx) => {
     await tx.query('SELECT pg_advisory_xact_lock(87000002)');
     const existing = await tx.query<{ total: bigint }>('SELECT COUNT(*) AS total FROM clients');
-    if ((existing.rows[0] as { total: bigint }).total > 0n) return false;
     const now = clock.now();
+    if ((existing.rows[0] as { total: bigint }).total > 0n) {
+      await ensureLavkaPartner(tx, now);
+      return false;
+    }
     const system = await createSystemAccounts(tx, now);
     const opening = (system.get('OPENING') as Account).id;
     const correspondent = (system.get('CORRESPONDENT') as Account).id;
@@ -113,6 +117,7 @@ export async function seedIfEmpty(pool: Pool, clock: BankClock): Promise<boolean
         );
       }
     }
+    await ensureLavkaPartner(tx, now);
     logger.info('personas seeded', { clients: PERSONAS.length });
     return true;
   });

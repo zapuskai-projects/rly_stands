@@ -208,6 +208,76 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+  /_kit/facts/qr:
+    get:
+      operationId: kitQrCodes
+      x-release: '1.2'
+      summary: QR-коды магазина
+      description: |
+        QR-коды от старых к новым (не больше 200) с суммами и возвратами. `label` — метка попытки, под которой QR-код был выставлен; `qrId` и `orderId` выбирают один QR-код. Без фильтров — все. Работает только с релиза 1.2, раньше отвечает 404 `NOT_FOUND`.
+        `creditedKop` — сколько зачислено на расчётный счёт магазина (сумма минус комиссия), `remainingKop` — сколько ещё можно вернуть покупателю.
+      parameters:
+        - name: label
+          in: query
+          schema:
+            type: string
+        - name: qrId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: orderId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: QR-коды
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QrFact'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /_kit/facts/webhook-deliveries:
+    get:
+      operationId: kitWebhookDeliveries
+      x-release: '1.2'
+      summary: Доставки уведомлений магазину
+      description: |
+        Доставки от старых к новым (не больше 200) с попытками. `label` — метка попытки, под которой был выставлен QR-код; `qrId` и `event` сужают выборку. `body` — тело уведомления как оно отправлено, `signature` — значение заголовка `X-Signature`. Работает только с релиза 1.2, раньше отвечает 404 `NOT_FOUND`.
+      parameters:
+        - name: label
+          in: query
+          schema:
+            type: string
+        - name: qrId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: event
+          in: query
+          schema:
+            type: string
+            enum: [qr.paid, qr.refunded]
+      responses:
+        '200':
+          description: Доставки
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WebhookDeliveryFact'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /_kit/facts/operations:
     get:
       operationId: kitOperations
@@ -791,6 +861,129 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AutopaymentFact'
+    QrRefundFact:
+      type: object
+      additionalProperties: false
+      required: [id, operationId, operationNumber, amountKop, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        operationId:
+          type: string
+          format: uuid
+        operationNumber:
+          type: string
+        amountKop:
+          $ref: '#/components/schemas/Kopecks'
+        createdAt:
+          type: string
+    QrFact:
+      type: object
+      additionalProperties: false
+      required: [id, orderId, status, description, amountKop, commissionKop, creditedKop, refundedKop, remainingKop, operationId, operationNumber, payerPhone, createdAt, expiresAt, paidAt, refunds]
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+        status:
+          type: string
+          enum: [CREATED, PAID, PARTIALLY_REFUNDED, REFUNDED, EXPIRED, CANCELLED]
+        description:
+          type: string
+        amountKop:
+          $ref: '#/components/schemas/Kopecks'
+        commissionKop:
+          $ref: '#/components/schemas/Kopecks'
+        creditedKop:
+          $ref: '#/components/schemas/Kopecks'
+        refundedKop:
+          $ref: '#/components/schemas/Kopecks'
+        remainingKop:
+          $ref: '#/components/schemas/Kopecks'
+        operationId:
+          type: [string, 'null']
+          format: uuid
+        operationNumber:
+          type: [string, 'null']
+        payerPhone:
+          type: [string, 'null']
+        createdAt:
+          type: string
+        expiresAt:
+          type: string
+        paidAt:
+          type: [string, 'null']
+        refunds:
+          type: array
+          items:
+            $ref: '#/components/schemas/QrRefundFact'
+    WebhookAttemptFact:
+      type: object
+      additionalProperties: false
+      required: [attempt, at, statusCode, error, durationMs]
+      properties:
+        attempt:
+          type: integer
+        at:
+          type: string
+        statusCode:
+          type: [integer, 'null']
+        error:
+          type: [string, 'null']
+        durationMs:
+          type: integer
+    WebhookDeliveryFact:
+      type: object
+      additionalProperties: false
+      required: [eventId, event, qrId, orderId, operationId, url, status, attemptsMade, attempts, nextAttemptAt, createdAt, body, signature, defects]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        event:
+          type: string
+          enum: [qr.paid, qr.refunded]
+        qrId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+        operationId:
+          type: string
+          format: uuid
+        url:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, DELIVERED, FAILED]
+        attemptsMade:
+          type: integer
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookAttemptFact'
+        nextAttemptAt:
+          type: [string, 'null']
+        createdAt:
+          type: string
+        body:
+          type: object
+        signature:
+          type: string
+        defects:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, details]
+            properties:
+              code:
+                type: string
+              details:
+                type: object
     OperationFact:
       type: object
       additionalProperties: false
@@ -844,7 +1037,7 @@ components:
           $ref: '#/components/schemas/Phone'
         type:
           type: string
-          enum: [OWN_TRANSFER, PHONE_TRANSFER]
+          enum: [OWN_TRANSFER, PHONE_TRANSFER, QR_PAYMENT, QR_REFUND]
         route:
           type: string
           enum: [INTERNAL, SBP]

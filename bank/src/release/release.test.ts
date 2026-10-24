@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { isRelease, parseRelease, releaseAtLeast } from './release';
+import { hiddenOperationTypes, isRelease, parseRelease, releaseAtLeast } from './release';
 
 describe('релизы банка', () => {
   it('релиз доступен, когда текущий не ниже требуемого', () => {
@@ -16,5 +16,13 @@ describe('релизы банка', () => {
     assert.equal(isRelease('2.0'), false);
     assert.equal(isRelease(1.1), false);
     assert.throws(() => parseRelease('9.9', 'тест'), /9\.9/);
+  });
+});
+
+describe('виды операций следующих релизов', () => {
+  it('до 1.2 оплата и возврат по QR скрыты, с 1.2 видны', () => {
+    assert.deepEqual(hiddenOperationTypes('1.0'), ['QR_PAYMENT', 'QR_REFUND']);
+    assert.deepEqual(hiddenOperationTypes('1.1'), ['QR_PAYMENT', 'QR_REFUND']);
+    assert.deepEqual(hiddenOperationTypes('1.2'), []);
   });
 });

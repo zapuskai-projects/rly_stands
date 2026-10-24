@@ -5,6 +5,8 @@ import type { BankClock } from '../clock/bank-clock';
 import type { Db } from '../db/pool';
 import { queueNotificationsBeforeCompletion, wasNotifiedBeforeCompletion } from '../defects/early-notification';
 import { queueCompletionNotifications } from '../notifications/completion';
+import { clearPendingPayment } from '../qr/qr.repository';
+import { settleQrPayment } from '../qr/qr-settlement';
 import { clearOperationFee, lockOperation, transitionOperation, type OperationRecord } from './operations.repository';
 
 export interface LifecycleContext {
@@ -61,6 +63,10 @@ export async function settleOperation(tx: Db, context: LifecycleContext, operati
 
 export async function beginProcessing(tx: Db, context: LifecycleContext, operation: OperationRecord): Promise<'COMPLETED' | 'SENT_TO_SBP'> {
   await transitionOperation(tx, operation.id, 'PROCESSING', stepOptions(context, context.clock.now()));
+  if (operation.type === 'QR_PAYMENT') {
+    await settleQrPayment(tx, context, operation);
+    return 'COMPLETED';
+  }
   if (operation.route === 'INTERNAL' && operation.toAccountId) {
     await settleOperation(tx, context, operation, operation.toAccountId);
     return 'COMPLETED';
@@ -81,6 +87,7 @@ async function dropWithoutDebit(
   const at = context.clock.now();
   await closeHold(tx, operation.id, 'RELEASED', at);
   await clearOperationFee(tx, operation.id);
+  if (operation.qrId) await clearPendingPayment(tx, operation.id);
   await transitionOperation(tx, operation.id, status, stepOptions(context, at, reason));
 }
 

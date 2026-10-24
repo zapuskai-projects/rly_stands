@@ -102,3 +102,47 @@ describe('статус для человека', () => {
     assert.match(statusHint(operation([['CREATED'], ['CHECKING'], ['PROCESSING'], ['FAILED', 'SBP_UNAVAILABLE']], { route: 'SBP' })), /недоступна/);
   });
 });
+
+describe('ход оплаты по QR', () => {
+  const qr = (statuses: [OperationStatus, string?][], overrides: Partial<Input> = {}) => operation(statuses, { type: 'QR_PAYMENT', ...overrides });
+
+  it('выполненная оплата: проверка безопасности и зачисление магазину', () => {
+    const steps = buildTimeline(qr([['CREATED'], ['CHECKING'], ['PROCESSING'], ['COMPLETED']]));
+    assert.deepEqual(steps.map((step) => [step.key, step.state]), [
+      ['created', 'done'],
+      ['rules', 'done'],
+      ['antifraud', 'done'],
+      ['processing', 'done'],
+      ['final', 'done'],
+    ]);
+    assert.equal(steps[1]?.label, 'Ограничения по счёту проверены');
+    assert.equal(steps.at(-1)?.label, 'Зачислено магазину');
+  });
+
+  it('оплата на проверке специалиста ждёт, конец называет магазин', () => {
+    const steps = buildTimeline(qr([['CREATED'], ['CHECKING'], ['ON_REVIEW', 'ANTIFRAUD_REVIEW']]));
+    assert.equal(steps.find((step) => step.key === 'review')?.state, 'current');
+    assert.equal(steps.at(-1)?.label, 'Зачислено магазину');
+  });
+
+  it('отклонённая оплата называет оплату, а не перевод', () => {
+    const rejection = { code: 'OPERATOR_REJECTED', message: 'Нет' };
+    const steps = buildTimeline(qr([['CREATED'], ['CHECKING'], ['ON_REVIEW'], ['REJECTED', 'OPERATOR_REJECTED']], { rejection }));
+    assert.equal(steps.at(-1)?.label, 'Специалист отклонил оплату');
+    const arrest = buildTimeline(qr([['CREATED'], ['CHECKING'], ['REJECTED', 'ACCOUNT_ARRESTED']], { rejection: { code: 'ACCOUNT_ARRESTED', message: 'Арест' } }));
+    assert.equal(arrest.at(-1)?.label, 'Ограничения по счёту: оплата не прошла проверку');
+  });
+
+  it('возврат по QR: без проверки безопасности, конец называет покупателя', () => {
+    const steps = buildTimeline(qr([['CREATED'], ['CHECKING'], ['PROCESSING'], ['COMPLETED']], { type: 'QR_REFUND' }));
+    assert.deepEqual(steps.map((step) => step.key), ['created', 'rules', 'processing', 'final']);
+    assert.equal(steps.at(-1)?.label, 'Возвращено покупателю');
+    assert.match(statusHint(qr([['CREATED'], ['CHECKING'], ['PROCESSING'], ['COMPLETED']], { type: 'QR_REFUND' })), /возвращены покупателю/);
+  });
+
+  it('пояснение под статусом говорит про оплату и магазин', () => {
+    assert.match(statusHint(qr([['CREATED'], ['CHECKING']])), /проверяет оплату/);
+    assert.match(statusHint(qr([['CREATED'], ['CHECKING'], ['PROCESSING'], ['COMPLETED']])), /магазин/);
+    assert.match(statusHint(qr([['CREATED'], ['CHECKING'], ['REJECTED']], { rejection: { code: 'ACCOUNT_ARRESTED', message: 'Арест' } })), /Деньги остались на вашем счёте/);
+  });
+});

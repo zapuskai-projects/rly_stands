@@ -42,10 +42,12 @@ describe('документы банка', () => {
     assert.deepEqual(first.map((item) => item.slug), ['old', 'release-notes']);
     assert.equal(first[0]?.markdown.includes('новое'), false);
     assert.equal(first[1]?.markdown.includes('1.1.0'), false);
+    assert.equal(first[1]?.version, '1.0.0');
     const second = documentsForRelease(documents, '1.1');
     assert.deepEqual(second.map((item) => item.slug), ['old', 'later', 'release-notes']);
     assert.ok(second[0]?.markdown.includes('новое'));
     assert.ok(second[2]?.markdown.includes('1.1.0'));
+    assert.equal(second[2]?.version, '1.1.0');
   });
 
   it('в документах банка нет пометок с неизвестным релизом и ни одна не осталась в тексте для 1.2', () => {

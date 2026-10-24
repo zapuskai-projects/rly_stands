@@ -1,5 +1,5 @@
 export type OperationStatus = 'CREATED' | 'CHECKING' | 'ON_REVIEW' | 'PROCESSING' | 'COMPLETED' | 'REJECTED' | 'FAILED' | 'REFUNDED';
-export type OperationType = 'OWN_TRANSFER' | 'PHONE_TRANSFER';
+export type OperationType = 'OWN_TRANSFER' | 'PHONE_TRANSFER' | 'QR_PAYMENT' | 'QR_REFUND';
 export type OperationRoute = 'INTERNAL' | 'SBP';
 
 export interface StatusHistoryItem {
@@ -23,6 +23,7 @@ export interface Operation {
   recipient: { accountNumber: string | null; phone: string | null; bankCode: string | null; bankName: string | null; displayName: string | null };
   comment: string | null;
   templateId?: string | null;
+  qrId?: string | null;
   rejection: { code: string; message: string } | null;
   createdAt: string;
   updatedAt: string;
@@ -308,4 +309,15 @@ export interface AutopaymentRun {
 export interface OfficeAutopayment {
   autopayment: Autopayment;
   runs: AutopaymentRun[];
+}
+
+export type QrStatus = 'CREATED' | 'PAID' | 'PARTIALLY_REFUNDED' | 'REFUNDED' | 'EXPIRED' | 'CANCELLED';
+
+export interface QrPurchase {
+  qrId: string;
+  merchant: string;
+  amount: number;
+  description: string;
+  status: QrStatus;
+  expiresAt: string;
 }

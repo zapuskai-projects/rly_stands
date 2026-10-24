@@ -67,6 +67,7 @@ export interface OfficeOperationFilter {
   clientNumber?: string;
   status?: OperationStatus;
   type?: OperationType;
+  excludeTypes?: readonly OperationType[];
 }
 
 export async function listOfficeOperations(
@@ -85,6 +86,7 @@ export async function listOfficeOperations(
   if (filter.clientNumber) add('c.number = ?', filter.clientNumber);
   if (filter.status) add('o.status = ?', filter.status);
   if (filter.type) add('o.type = ?', filter.type);
+  if (filter.excludeTypes?.length) add('o.type <> ALL(?::text[])', [...filter.excludeTypes]);
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const count = await db.query<{ total: bigint }>(`SELECT COUNT(*) AS total FROM operations o JOIN clients c ON c.id = o.client_id ${where}`, params);
   const page = await db.query<Row>(
@@ -94,7 +96,15 @@ export async function listOfficeOperations(
   return { rows: page.rows.map(mapRow), total: Number((count.rows[0] as { total: bigint }).total) };
 }
 
-export async function listClientRecentOperations(db: Db, clientId: string, limit: number): Promise<OfficeOperationRow[]> {
-  const result = await db.query<Row>(`${SELECT_ROW} WHERE o.client_id = $1 ORDER BY o.created_at DESC, o.number DESC LIMIT $2`, [clientId, limit]);
+export async function listClientRecentOperations(
+  db: Db,
+  clientId: string,
+  limit: number,
+  excludeTypes: readonly OperationType[] = [],
+): Promise<OfficeOperationRow[]> {
+  const result = await db.query<Row>(
+    `${SELECT_ROW} WHERE o.client_id = $1 AND o.type <> ALL($3::text[]) ORDER BY o.created_at DESC, o.number DESC LIMIT $2`,
+    [clientId, limit, [...excludeTypes]],
+  );
   return result.rows.map(mapRow);
 }

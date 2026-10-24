@@ -12,6 +12,8 @@ import { approveReview, rejectReview } from '../../review/review.service';
 import { findReviewItem, listReviewItems, type ReviewState } from '../../review/review.repository';
 import { notFound } from '../../shared/errors';
 import { getTariff } from '../../tariffs/tariffs.repository';
+import { hiddenOperationTypes } from '../../release/release';
+import type { ReleaseSource } from '../../release/release-source';
 import { reviewItemDto } from '../dto';
 import { officeOperationRowDto } from '../dto-office';
 import type { Handler, HandlerContext } from '../router';
@@ -19,6 +21,7 @@ import type { Handler, HandlerContext } from '../router';
 interface Deps {
   pool: Pool;
   clock: BankClock;
+  releases: ReleaseSource;
 }
 
 interface CommentBody {
@@ -30,7 +33,7 @@ const RECENT_OPERATIONS = 6;
 const operatorOf = (ctx: HandlerContext): string => (ctx.operator as { login: string }).login;
 const operationIdOf = (ctx: HandlerContext): string => String(ctx.params.operationId);
 
-async function reviewDetails(pool: Pool, operationId: string) {
+async function reviewDetails(pool: Pool, releases: ReleaseSource, operationId: string) {
   const item = await findReviewItem(pool, operationId);
   const operation = await findOperationOfAnyClient(pool, operationId);
   if (!item || !operation) throw notFound('REVIEW_NOT_FOUND', 'Проверки по этой операции нет');
@@ -41,7 +44,7 @@ async function reviewDetails(pool: Pool, operationId: string) {
   const thresholds = stored ? { review: stored.reviewThreshold, reject: stored.rejectThreshold } : await loadThresholds(pool);
   const primary = await findPrimaryAccount(pool, client.id);
   const tariff = await getTariff(pool, client.tariffCode);
-  const recent = (await listClientRecentOperations(pool, client.id, RECENT_OPERATIONS + 1)).filter((row) => row.id !== operationId);
+  const recent = (await listClientRecentOperations(pool, client.id, RECENT_OPERATIONS + 1, hiddenOperationTypes(await releases.current()))).filter((row) => row.id !== operationId);
   return {
     review: reviewItemDto(item),
     client: {
@@ -59,7 +62,7 @@ async function reviewDetails(pool: Pool, operationId: string) {
   };
 }
 
-export function officeHandlers({ pool, clock }: Deps): Record<string, Handler> {
+export function officeHandlers({ pool, clock, releases }: Deps): Record<string, Handler> {
   return {
     listOfficeReviews: async (ctx) => {
       const limit = (ctx.query.limit as number | undefined) ?? DEFAULT_PAGE_SIZE;
@@ -68,7 +71,7 @@ export function officeHandlers({ pool, clock }: Deps): Record<string, Handler> {
       const { rows, total } = await listReviewItems(pool, state, limit, offset);
       return { status: 200, body: { items: rows.map(reviewItemDto), total, limit, offset } };
     },
-    getOfficeReview: async (ctx) => ({ status: 200, body: await reviewDetails(pool, operationIdOf(ctx)), operationId: operationIdOf(ctx) }),
+    getOfficeReview: async (ctx) => ({ status: 200, body: await reviewDetails(pool, releases, operationIdOf(ctx)), operationId: operationIdOf(ctx) }),
     approveReview: async (ctx) => {
       const comment = (ctx.body as CommentBody | undefined)?.comment?.trim() || null;
       const item = await approveReview({ pool, clock }, operationIdOf(ctx), operatorOf(ctx), comment, ctx.requestId);

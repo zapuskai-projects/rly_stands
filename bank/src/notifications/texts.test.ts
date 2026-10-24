@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { formatRubles } from '../accounts/money';
 import { recipientTexts, senderTexts, type CompletedTransferFacts } from './texts';
 
 const phoneTransfer: CompletedTransferFacts = {
@@ -33,5 +34,12 @@ describe('тексты уведомлений о проведении', () => {
     const texts = recipientTexts(phoneTransfer);
     assert.equal(texts.sms, 'ЗапускБанк: вам поступил перевод 1\u00a0500,00\u00a0₽. Отправитель: Анна С. Операция ZB0000100001.');
     assert.equal(texts.push, 'Вам поступил перевод 1\u00a0500,00\u00a0₽. Отправитель: Анна С.');
+  });
+
+  it('оплата по QR называет магазин, не слово «перевод»', () => {
+    const texts = senderTexts({ ...phoneTransfer, type: 'QR_PAYMENT', recipientName: 'Лавка Гарипова', recipientPhone: null, recipientBankName: null });
+    const amount = formatRubles(150000n);
+    assert.equal(texts.sms, `ЗапускБанк: оплата по QR ${amount} в «Лавка Гарипова» выполнена. Операция ZB0000100001.`);
+    assert.equal(texts.push, `Оплата по QR выполнена: ${amount} в «Лавка Гарипова»`);
   });
 });

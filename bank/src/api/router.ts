@@ -4,9 +4,13 @@ import { authenticateOperator } from '../operators/operators.service';
 import type { Operator } from '../operators/operators.repository';
 import type { ActiveSession } from '../auth/auth.repository';
 import { extractBearerToken } from '../auth/codes';
+import { authenticatePartner } from '../partners/partner-auth';
+import { PARTNER_KEY_HEADER } from '../partners/partner-key';
+import type { Partner } from '../partners/partners.repository';
 import { BankError, type ErrorDetail } from '../shared/errors';
 import { logger } from '../shared/logger';
-import { ROOT_FIELD, type Contract, type OperationSpec } from './contract';
+import { ROOT_FIELD, type Contract, type OperationSpec, type ParamSpec } from './contract';
+import { releaseAtLeast, type Release } from '../release/release';
 import { requireRelease, type ReleaseSource } from '../release/release-source';
 import { recordOutcome } from './request-context';
 
@@ -17,6 +21,7 @@ export interface HandlerContext {
   body: unknown;
   session: ActiveSession | null;
   operator: (Operator & { sessionId: string }) | null;
+  partner: Partner | null;
   requestId: string;
   attemptLabel: string | null;
 }
@@ -40,7 +45,7 @@ function qualify(prefix: string, field: string): string {
   return field === ROOT_FIELD ? prefix : `${prefix}.${field}`;
 }
 
-function collectParams(req: Request, operation: OperationSpec) {
+function collectParams(req: Request, operation: OperationSpec, release: Release | null) {
   const buckets = { path: {} as Record<string, unknown>, query: {} as Record<string, unknown>, header: {} as Record<string, unknown> };
   const issues: ErrorDetail[] = [];
   for (const param of operation.params) {
@@ -50,11 +55,23 @@ function collectParams(req: Request, operation: OperationSpec) {
       continue;
     }
     const value = param.coerce === 'number' && typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : raw;
+    const hidden = param.releaseValues && release ? hiddenValue(param.releaseValues, release, value) : null;
+    if (hidden) {
+      issues.push({ field: `${param.location}.${param.name}`, message: hidden });
+      continue;
+    }
     const result = param.validator.validate(value);
     if (result.ok) buckets[param.location][param.name] = result.value;
     else issues.push(...result.issues.map((issue) => ({ field: `${param.location}.${param.name}`, message: issue.message })));
   }
   return { buckets, issues };
+}
+
+function hiddenValue(spec: NonNullable<ParamSpec['releaseValues']>, release: Release, value: unknown): string | null {
+  const required = typeof value === 'string' ? spec.since[value] : undefined;
+  if (!required || releaseAtLeast(release, required)) return null;
+  const allowed = spec.enumValues.filter((item) => !spec.since[item] || releaseAtLeast(release, spec.since[item] as Release));
+  return `Неверный вариант: ожидалось одно из ${allowed.map((item) => `"${item}"`).join('|')}`;
 }
 
 function collectBody(req: Request, operation: OperationSpec): { value: unknown; issues: ErrorDetail[] } {
@@ -87,13 +104,16 @@ function respond(res: Response, operation: OperationSpec, requestId: string, res
   else res.json(result.body);
 }
 
-async function execute(req: Request, res: Response, operation: OperationSpec, handler: Handler, auth: AuthDeps): Promise<void> {
+async function execute(req: Request, res: Response, operation: OperationSpec, handler: Handler, auth: AuthDeps, releases: ReleaseSource): Promise<void> {
   const requestId = res.locals.requestId as string;
   const token = extractBearerToken(req.headers.authorization);
   const session = operation.auth === 'CLIENT' ? await authenticate(auth, token) : null;
   if (session) res.locals.clientId = session.clientId;
   const operatorSession = operation.auth === 'OPERATOR' ? await authenticateOperator(auth.pool, token) : null;
-  const { buckets, issues: paramIssues } = collectParams(req, operation);
+  const partnerKey = req.headers[PARTNER_KEY_HEADER];
+  const partner = operation.auth === 'PARTNER' ? await authenticatePartner(auth.pool, typeof partnerKey === 'string' ? partnerKey : undefined) : null;
+  const release = operation.params.some((param) => param.releaseValues) ? await releases.current() : null;
+  const { buckets, issues: paramIssues } = collectParams(req, operation, release);
   const body = collectBody(req, operation);
   const issues = [...paramIssues, ...body.issues];
   if (issues.length > 0) throw new BankError(400, 'VALIDATION_ERROR', 'Запрос не прошёл проверку формата', issues);
@@ -104,6 +124,7 @@ async function execute(req: Request, res: Response, operation: OperationSpec, ha
     body: body.value,
     session,
     operator: operatorSession ? { ...operatorSession.operator, sessionId: operatorSession.sessionId } : null,
+    partner,
     requestId,
     attemptLabel: (res.locals.attemptLabel as string | null) ?? null,
   });
@@ -124,7 +145,7 @@ export function registerOperations(app: Express, contract: Contract, handlers: R
     const available = operation.release ? [requireRelease(releases, operation.release)] : [];
     app[operation.method](operation.expressPath, ...available, async (req: Request, res: Response) => {
       try {
-        await execute(req, res, operation, handler, auth);
+        await execute(req, res, operation, handler, auth, releases);
       } catch (error) {
         if (error instanceof BankError && !operation.responses.has(error.status)) {
           logger.error('undeclared error status', { operationId: operation.operationId, status: error.status, code: error.code });

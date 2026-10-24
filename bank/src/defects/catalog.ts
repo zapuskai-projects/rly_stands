@@ -11,6 +11,10 @@ export const DEFECT_CODES = [
   'template-ignores-amount',
   'autopay-no-retry',
   'regression-own-transfer-fee',
+  'qr-double-payment',
+  'qr-expired-accepted',
+  'refund-over-amount',
+  'webhook-no-retry',
 ] as const;
 
 export type DefectCode = (typeof DEFECT_CODES)[number];

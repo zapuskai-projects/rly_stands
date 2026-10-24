@@ -100,3 +100,37 @@ components:
     assert.throws(() => filterSpec({ paths: { '/a': { get: { 'x-release': '9.9' } } } }, '1.0'), /9\.9/);
   });
 });
+
+describe('значения перечислений следующих релизов', () => {
+  const source = `openapi: 3.1.0
+components:
+  schemas:
+    Kind:
+      type: string
+      enum: [A, B, C]
+      x-release-values:
+        B: '1.1'
+        C: '1.2'
+    Plain:
+      type: string
+      enum: [X, Y]
+`;
+  const kind = (release: '1.0' | '1.1' | '1.2') => dig<Json>(parse(specForRelease(source, release)), 'components.schemas.Kind');
+
+  it('на 1.0 остаются значения без пометки и сама пометка уходит', () => {
+    assert.deepEqual(kind('1.0'), { type: 'string', enum: ['A'] });
+  });
+
+  it('на 1.1 появляются значения этого релиза, пометка остаётся только у значений следующих', () => {
+    assert.deepEqual(kind('1.1'), { type: 'string', enum: ['A', 'B'], 'x-release-values': { B: '1.1' } });
+  });
+
+  it('на 1.2 все значения на месте, перечисление без пометки не трогается', () => {
+    assert.deepEqual(kind('1.2').enum, ['A', 'B', 'C']);
+    assert.deepEqual(dig<Json>(parse(specForRelease(source, '1.0')), 'components.schemas.Plain'), { type: 'string', enum: ['X', 'Y'] });
+  });
+
+  it('неизвестный релиз в пометке значений — ошибка', () => {
+    assert.throws(() => specForRelease(source.replace("C: '1.2'", "C: '9.9'"), '1.0'), /9\.9/);
+  });
+});

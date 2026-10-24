@@ -1,4 +1,4 @@
-import { publicBase, BANK_MODULE } from './bank-api';
+import { BANK_MODULE, PARTNER_KEY, publicBase } from './bank-api';
 import { ProbeError } from './errors';
 import { asArray, asRecord, failure, http, str } from './http';
 import { executor, type ExecutorTable } from './types';
@@ -6,6 +6,13 @@ import { executor, type ExecutorTable } from './types';
 const CALL_TIMEOUT_MS = 30_000;
 const CODE = /код входа\D{0,20}(\d{6})\b/i;
 const SMS_WINDOW = 5;
+
+type PartnerHttpParams = {
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  path: string;
+  body?: Record<string, unknown>;
+  headers?: Record<string, string>;
+};
 
 type HttpParams = {
   asPhone: string;
@@ -56,6 +63,29 @@ export const BANK_HTTP_EXECUTORS: ExecutorTable = {
       id: str(body.id),
       operationId: str(body.id),
       number: str(body.number),
+      replayed: result.headers['idempotent-replayed'] === 'true',
+      qrId: str(body.qrId),
+      firstId: str(asRecord(asArray(body.items)[0]).id),
+    };
+  }),
+
+  'bank.partnerHttp': executor<PartnerHttpParams>(async (params, ctx) => {
+    const result = await http(BANK_MODULE, `${publicBase()}${params.path}`, {
+      method: params.method,
+      json: params.body,
+      headers: { 'X-Partner-Key': PARTNER_KEY, ...params.headers, 'X-Attempt-Label': ctx.label },
+      timeoutMs: CALL_TIMEOUT_MS,
+    });
+    const body = asRecord(result.json);
+    return {
+      status: result.status,
+      code: str(body.code),
+      qrId: str(body.qrId),
+      payload: str(body.payload),
+      qrStatus: str(body.status ?? body.qrStatus),
+      refundId: str(body.refundId),
+      operationId: str(body.operationId),
+      operationNumber: str(body.operationNumber),
       replayed: result.headers['idempotent-replayed'] === 'true',
     };
   }),

@@ -110,7 +110,7 @@ export function templateHandlers({ pool, clock, lookupRecipient, releases }: Dep
       const histories = await loadStatusHistories(pool, [operation.id]);
       return {
         status: result.replayed ? 200 : 201,
-        body: operationDto(operation, histories.get(operation.id) ?? [], await releases.atLeast('1.1')),
+        body: operationDto(operation, histories.get(operation.id) ?? [], await releases.current()),
         headers: result.replayed ? { 'Idempotent-Replayed': 'true' } : undefined,
         operationId: result.operationId,
       };

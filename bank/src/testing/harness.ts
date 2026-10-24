@@ -19,6 +19,8 @@ import { dispatchPendingSbp, recoverStuckSbp } from '../sbp/dispatcher';
 import type { SbpAnswer, SbpGateway, SbpRequest } from '../sbp/gateway';
 import { OPERATOR_SEEDS } from '../seed/operators';
 import { seedIfEmpty } from '../seed/seed';
+import { dispatchDueWebhooks } from '../webhooks/webhook-dispatcher';
+import type { WebhookAnswer, WebhookRequest, WebhookSender } from '../webhooks/webhook-sender';
 
 export interface ApiResponse {
   status: number;
@@ -67,6 +69,21 @@ class ScriptedSbp implements SbpGateway {
   }
 }
 
+export class ScriptedWebhook {
+  readonly requests: WebhookRequest[] = [];
+  private readonly queue: WebhookAnswer[] = [];
+  fallback: WebhookAnswer = { kind: 'RESPONSE', status: 200 };
+
+  answers(...answers: WebhookAnswer[]): void {
+    this.queue.push(...answers);
+  }
+
+  readonly send: WebhookSender = async (request) => {
+    this.requests.push(request);
+    return this.queue.shift() ?? this.fallback;
+  };
+}
+
 export interface DrainOptions {
   brokerDown?: boolean;
   sbp?: boolean;
@@ -88,6 +105,8 @@ export interface Harness {
   expireReviews(): Promise<number>;
   autopay(): Promise<CycleReport>;
   recoverSbp(timeoutMs: number): Promise<number>;
+  webhook: ScriptedWebhook;
+  dispatchWebhooks(realNow?: Date): Promise<number>;
   deps: { pool: Pool; clock: BankClock };
   close(): Promise<void>;
 }
@@ -116,6 +135,7 @@ export async function startHarness(databaseUrl: string, startTime: Date, options
 
   const events: PublishedEvent[] = [];
   const sbp = new ScriptedSbp(pool);
+  const webhook = new ScriptedWebhook();
   const deps = { pool, clock };
   let brokerDown = false;
 
@@ -189,6 +209,8 @@ export async function startHarness(databaseUrl: string, startTime: Date, options
     expireReviews: () => expireOverdueReviews(deps),
     autopay: () => runAutopaymentCycle({ ...deps, lookupRecipient: sbp.lookup }, databaseReleaseSource(pool)),
     recoverSbp: (timeoutMs) => recoverStuckSbp(deps, timeoutMs),
+    webhook,
+    dispatchWebhooks: (realNow = new Date()) => dispatchDueWebhooks({ pool, clock, send: webhook.send, realNow: () => realNow }),
     deps,
     async close() {
       await new Promise<void>((resolve) => server.close(() => resolve()));

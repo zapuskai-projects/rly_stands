@@ -7,6 +7,8 @@ export const BANK_MODULE = 'ЗапускБанк';
 
 export const BANK_RELEASES = ['1.0', '1.1', '1.2'];
 
+export const PARTNER_KEY = 'zbk_test_lavka_7f3a91c4e2d85b60a1c9';
+
 const DEFAULT_BASE = 'http://kit-bank-core:18400/_kit';
 const CALL_TIMEOUT_MS = 30_000;
 

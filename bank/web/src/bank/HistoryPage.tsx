@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { ErrorBox, Loading } from '../components/States';
 import { clientApi } from '../lib/api';
 import { useAsync, useDocumentTitle } from '../lib/hooks';
-import { STATUS_LABEL, TYPE_LABEL } from '../lib/status';
-import type { Operation, OperationStatus, OperationType, Page } from '../lib/types';
+import { useBankRelease } from '../lib/release';
+import { STATUS_LABEL, TYPE_LABEL, typeFilterOptions } from '../lib/status';
+import type { Operation, OperationStatus, Page } from '../lib/types';
 import { OperationList } from './OperationList';
 
 const PAGE_SIZE = 15;
@@ -20,6 +21,7 @@ const EMPTY: Filters = { status: '', type: '', from: '', to: '', number: '' };
 
 export function HistoryPage() {
   useDocumentTitle('История · ЗапускБанк');
+  const release = useBankRelease();
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [applied, setApplied] = useState<Filters>(EMPTY);
   const [offset, setOffset] = useState(0);
@@ -70,7 +72,7 @@ export function HistoryPage() {
             <label htmlFor="f-type">Вид</label>
             <select id="f-type" className="input" value={filters.type} onChange={(event) => set('type')(event.target.value)} data-testid="filter-type">
               <option value="">Любой</option>
-              {(Object.keys(TYPE_LABEL) as OperationType[]).map((type) => (
+              {typeFilterOptions(release).map((type) => (
                 <option key={type} value={type}>
                   {TYPE_LABEL[type]}
                 </option>

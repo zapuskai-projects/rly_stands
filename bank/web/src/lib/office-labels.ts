@@ -3,12 +3,16 @@ import type { OfficeOperationRow } from './types';
 
 export function recipientLabel(row: Pick<OfficeOperationRow, 'type' | 'recipient'>): string {
   if (row.type === 'OWN_TRANSFER') return 'Свои счета клиента';
+  if (row.type === 'QR_PAYMENT') return row.recipient.displayName ?? 'Магазин';
+  if (row.type === 'QR_REFUND') return row.recipient.displayName ?? 'Покупатель';
   const who = row.recipient.displayName ?? (row.recipient.phone ? formatPhone(row.recipient.phone) : 'Получатель');
   return row.recipient.bankName && row.recipient.bankCode !== 'ZAPUSK' ? `${who}, ${row.recipient.bankName}` : who;
 }
 
 export function channelLabel(row: Pick<OfficeOperationRow, 'type' | 'route'>): string {
   if (row.type === 'OWN_TRANSFER') return 'между своими счетами';
+  if (row.type === 'QR_PAYMENT') return 'оплата по QR';
+  if (row.type === 'QR_REFUND') return 'возврат по QR';
   return row.route === 'SBP' ? 'по номеру телефона через СБП' : 'по номеру телефона';
 }
 

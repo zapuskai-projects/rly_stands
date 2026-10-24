@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { autopaymentRuns, BANK_EXECUTORS, requestRoute, statusClass, withRoutes, withTemplateFlag } from './bank';
+import { autopaymentRuns, BANK_EXECUTORS, deliveryRows, deliveryTotals, qrTotals, requestRoute, statusClass, withRoutes, withTemplateFlag } from './bank';
 import { hasFunding, resolveBankTime, resolvePersonaTimes } from './bank-api';
 import { runActions, substituteResults } from './run';
 
@@ -13,6 +13,7 @@ type Seen = { method: string; url: string; secret: string | undefined; body: unk
 
 let server: Server;
 let dataDir = '';
+let ledgerBroken = false;
 const seen: Seen[] = [];
 
 function readBody(request: IncomingMessage): Promise<unknown> {
@@ -39,6 +40,29 @@ const AUTOPAYMENTS = {
   autopayments: [{ id: 'ap-1', status: 'ACTIVE', runs: [{ outcome: 'FAILED' }, { outcome: 'FAILED' }, { outcome: 'EXECUTED' }, { outcome: 'PENDING' }] }, { id: 'ap-2', status: 'FINISHED', runs: [] }],
 };
 
+const QR_CODES = [
+  { id: 'qr-1', status: 'PARTIALLY_REFUNDED', amountKop: 100000, commissionKop: 700, creditedKop: 99300, refundedKop: 30000, operationId: 'op-1' },
+  { id: 'qr-2', status: 'REFUNDED', amountKop: 50000, commissionKop: 350, creditedKop: 49650, refundedKop: 50000, operationId: 'op-2' },
+  { id: 'qr-3', status: 'CREATED', amountKop: 1000, commissionKop: 0, creditedKop: 0, refundedKop: 0, operationId: null },
+  { id: 'qr-4', status: 'EXPIRED', amountKop: 1000, commissionKop: 0, creditedKop: 0, refundedKop: 0, operationId: null },
+];
+
+const DELIVERIES = [
+  {
+    eventId: 'e-1',
+    event: 'qr.paid',
+    status: 'DELIVERED',
+    attemptsMade: 3,
+    attempts: [
+      { attempt: 1, at: '2026-10-20T12:00:00.000+03:00', statusCode: 500, error: null },
+      { attempt: 2, at: '2026-10-20T12:00:10.200+03:00', statusCode: null, error: 'TIMEOUT' },
+      { attempt: 3, at: '2026-10-20T12:00:40.400+03:00', statusCode: 200, error: null },
+    ],
+  },
+  { eventId: 'e-2', event: 'qr.refunded', status: 'FAILED', attemptsMade: 4, attempts: [], defects: [{ code: 'webhook-no-retry', details: {} }] },
+  { eventId: 'e-3', event: 'qr.refunded', status: 'PENDING', attemptsMade: 1, attempts: [] },
+];
+
 before(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'kit-bank-test-'));
   writeFileSync(join(dataDir, 'bank-secret'), 'topsecret\n');
@@ -54,8 +78,14 @@ before(async () => {
     if (url.startsWith('/_kit/facts/operations/ZB0001')) return send(200, OPERATION);
     if (url.startsWith('/_kit/facts/operations/')) return send(404, { error: 'not found' });
     if (url.startsWith('/_kit/facts/operations')) return send(200, [OPERATION]);
-    if (url.startsWith('/_kit/facts/ledger')) return send(200, { balanceKop: 100, postingsSumKop: 100, consistent: true, holdsKop: 0 });
+    if (url.startsWith('/_kit/facts/qr?label=shape')) return send(200, { count: 0 });
+    if (url.startsWith('/_kit/facts/webhook-deliveries?label=shape')) return send(200, { items: [] });
+    if (url.startsWith('/_kit/facts/ledger')) return send(200, ledgerBroken ? {} : url.includes('account=') ? { balanceKop: 100, postingsSumKop: 100, consistent: true, holdsKop: 0 } : { inconsistent: [] });
     if (url.startsWith('/_kit/facts/requests')) return send(200, { requests: [{ method: 'POST', path: '/api/v1/transfers', status: 201 }] });
+    if (url.startsWith('/_kit/facts/qr?label=old')) return send(404, { code: 'NOT_FOUND' });
+    if (url.startsWith('/_kit/facts/qr')) return send(200, QR_CODES);
+    if (url.startsWith('/_kit/facts/webhook-deliveries?label=old')) return send(404, { code: 'NOT_FOUND' });
+    if (url.startsWith('/_kit/facts/webhook-deliveries')) return send(200, DELIVERIES);
     if (url.startsWith('/_kit/facts/autopayments?phone=%2B79990000404')) return send(404, { code: 'NOT_FOUND' });
     if (url.startsWith('/_kit/facts/autopayments')) return send(200, AUTOPAYMENTS);
     if (url === '/_kit/actions/autopay-run') return send(200, { runId: 'run-1', attempt: 2, outcome: 'FAILED', operationId: null, operationNumber: null, reasonCode: 'INSUFFICIENT_FUNDS', autopaymentStatus: 'ACTIVE', nextRunOn: '2026-10-22' });
@@ -162,6 +192,22 @@ describe('проверки банка', () => {
       withTemplateFlag([{ number: 'A', templateId: 'tpl-1' }, { number: 'B', templateId: null }, { number: 'C' }]).map((item) => item.byTemplate),
       [true, false, false],
     );
+  });
+
+  it('ответ банка без нужного списка — сбой проверки, а не пустые факты', async () => {
+    await assert.rejects(run('bank.qrCodes', { label: 'shape' }), /нет списка qrCodes/);
+    await assert.rejects(run('bank.webhookDeliveries', { label: 'shape' }), /нет списка deliveries/);
+    ledgerBroken = true;
+    try {
+      await assert.rejects(run('bank.ledger', {}), /нет списка inconsistent/);
+    } finally {
+      ledgerBroken = false;
+    }
+  });
+
+  it('попытка доставки без кода ответа и без ошибки не падает: код — пустая строка', () => {
+    const [row] = deliveryRows([{ attempts: [{ at: '2026-10-20T12:00:00+03:00' }] }]);
+    assert.deepEqual(row?.attemptCodes, ['']);
   });
 
   it('автоплатежи до релиза 1.1 — понятная ошибка, а не пустые факты', async () => {
@@ -309,5 +355,45 @@ describe('персоны сценария: время переводов про�
     assert.equal(hasFunding([{ phone: '+79001110002', dailyLimitKop: 5 }]), false);
     assert.equal(hasFunding([{ phone: '+79001110001', topUpKop: 100 }]), true);
     assert.equal(hasFunding([{ phone: '+79001110001', history: [] }]), true);
+  });
+});
+
+describe('проверки QR и уведомлений магазину', () => {
+  it('итоги по QR-кодам: оплаченные, возвраты, зачислено и комиссия считаются только по оплаченным', () => {
+    assert.deepEqual(qrTotals(QR_CODES), {
+      count: 4,
+      paidCount: 2,
+      refundedCount: 1,
+      partiallyRefundedCount: 1,
+      expiredCount: 1,
+      cancelledCount: 0,
+      totalAmountKop: 152000,
+      totalCreditedKop: 148950,
+      totalCommissionKop: 1050,
+      totalRefundedKop: 80000,
+    });
+  });
+
+  it('итоги по доставкам и паузы между попытками в секундах', () => {
+    assert.deepEqual(deliveryTotals(DELIVERIES), { count: 3, deliveredCount: 1, failedCount: 1, pendingCount: 1, retriedCount: 2, maxAttempts: 4, paidEvents: 1, refundedEvents: 2, defectiveCount: 1 });
+    const [first] = deliveryRows(DELIVERIES) as { attemptCodes: unknown[]; gapsSec: number[] }[];
+    assert.deepEqual(first?.attemptCodes, [500, 'TIMEOUT', 200]);
+    assert.deepEqual(first?.gapsSec, [10, 30]);
+    assert.deepEqual((deliveryRows(DELIVERIES) as { defectCodes: string[] }[]).map((row) => row.defectCodes), [[], ['webhook-no-retry'], []]);
+  });
+
+  it('bank.qrCodes и bank.webhookDeliveries читают факты банка, фильтры уходят в адрес', async () => {
+    seen.length = 0;
+    const qr = (await run('bank.qrCodes', { label: 'k7f3qa', orderId: 'order-1' })) as Record<string, unknown>;
+    assert.equal(qr.count, 4);
+    assert.equal((qr.qrCodes as unknown[]).length, 4);
+    const hooks = (await run('bank.webhookDeliveries', { qrId: 'qr-1', event: 'qr.paid' })) as Record<string, unknown>;
+    assert.equal(hooks.maxAttempts, 4);
+    assert.deepEqual(seen.map((item) => item.url), ['/_kit/facts/qr?label=k7f3qa&orderId=order-1', '/_kit/facts/webhook-deliveries?qrId=qr-1&event=qr.paid']);
+  });
+
+  it('до релиза 1.2 проверки отвечают понятной ошибкой', async () => {
+    await assert.rejects(run('bank.qrCodes', { label: 'old' }), /доступна с релиза 1\.2/);
+    await assert.rejects(run('bank.webhookDeliveries', { label: 'old' }), /доступны с релиза 1\.2/);
   });
 });

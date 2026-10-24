@@ -16,3 +16,9 @@ export function parseRelease(value: unknown, where: string): Release {
 export function releaseAtLeast(current: Release, required: Release): boolean {
   return RELEASES.indexOf(current) >= RELEASES.indexOf(required);
 }
+
+export const QR_OPERATION_TYPES = ['QR_PAYMENT', 'QR_REFUND'] as const;
+
+export function hiddenOperationTypes(current: Release): readonly (typeof QR_OPERATION_TYPES)[number][] {
+  return releaseAtLeast(current, '1.2') ? [] : QR_OPERATION_TYPES;
+}

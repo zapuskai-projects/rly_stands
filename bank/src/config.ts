@@ -6,6 +6,7 @@ export const MIGRATIONS_DIR = path.join(ROOT_DIR, 'migrations');
 export const WEB_DIR = path.join(ROOT_DIR, 'web-dist');
 export const DOCS_DIR = path.join(ROOT_DIR, 'docs');
 export const OPENAPI_PATH = path.join(ROOT_DIR, 'docs', 'openapi.yaml');
+export const PARTNER_OPENAPI_PATH = path.join(ROOT_DIR, 'docs', 'partner-openapi.yaml');
 
 export const ROLES = ['core', 'antifraud', 'sbp'] as const;
 export type BankRole = (typeof ROLES)[number];

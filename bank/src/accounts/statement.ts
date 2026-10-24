@@ -29,6 +29,7 @@ interface PostingRow {
   description: string;
   operation_id: string | null;
   is_debit: boolean;
+  hidden: boolean;
 }
 
 export async function balanceFromPostings(db: Db, accountId: string, before: Date | null): Promise<Kopecks> {
@@ -41,14 +42,17 @@ export async function balanceFromPostings(db: Db, accountId: string, before: Dat
   return (result.rows[0] as { balance: bigint }).balance;
 }
 
-export async function buildStatement(db: Db, account: Account, from: Date, toExclusive: Date): Promise<StatementData> {
+export const HIDDEN_ENTRY_DESCRIPTION = 'Платёж';
+
+export async function buildStatement(db: Db, account: Account, from: Date, toExclusive: Date, hiddenTypes: readonly string[] = []): Promise<StatementData> {
   const openingBalance = await balanceFromPostings(db, account.id, from);
   const result = await db.query<PostingRow>(
-    `SELECT id, posted_at, amount_kop, description, operation_id, (debit_account_id = $1) AS is_debit
-     FROM postings
-     WHERE (credit_account_id = $1 OR debit_account_id = $1) AND posted_at >= $2 AND posted_at < $3
-     ORDER BY posted_at, id`,
-    [account.id, from, toExclusive],
+    `SELECT p.id, p.posted_at, p.amount_kop, p.description, p.operation_id, (p.debit_account_id = $1) AS is_debit,
+            COALESCE(o.type = ANY($4::text[]), false) AS hidden
+     FROM postings p LEFT JOIN operations o ON o.id = p.operation_id
+     WHERE (p.credit_account_id = $1 OR p.debit_account_id = $1) AND p.posted_at >= $2 AND p.posted_at < $3
+     ORDER BY p.posted_at, p.id`,
+    [account.id, from, toExclusive, [...hiddenTypes]],
   );
   let running = openingBalance;
   let totalDebit = 0n;
@@ -67,8 +71,8 @@ export async function buildStatement(db: Db, account: Account, from: Date, toExc
       postedAt: row.posted_at,
       direction,
       amount: row.amount_kop,
-      description: row.description,
-      operationId: row.operation_id,
+      description: row.hidden ? HIDDEN_ENTRY_DESCRIPTION : row.description,
+      operationId: row.hidden ? null : row.operation_id,
       balanceAfter: running,
     };
   });

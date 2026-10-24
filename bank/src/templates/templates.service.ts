@@ -106,6 +106,9 @@ async function manualTemplate(tx: Db, clientId: string, input: ManualTemplateInp
 async function templateFromOperation(tx: Db, clientId: string, operationId: string, name: string, at: Date): Promise<NewTemplate> {
   const operation = await findClientOperation(tx, clientId, operationId);
   if (!operation) throw notFound('OPERATION_NOT_FOUND', 'Операция не найдена');
+  if (operation.type === 'QR_PAYMENT' || operation.type === 'QR_REFUND') {
+    throw unprocessable('OPERATION_NOT_TRANSFER', 'Шаблон можно создать только из перевода');
+  }
   if (operation.status !== 'COMPLETED') throw unprocessable('OPERATION_NOT_COMPLETED', 'Шаблон можно создать только из выполненной операции');
   const from = await findClientAccountById(tx, clientId, operation.fromAccountId);
   if (!from) throw unprocessable('ACCOUNT_NOT_FOUND', 'Счёт списания не найден среди ваших счетов');

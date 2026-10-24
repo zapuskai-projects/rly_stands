@@ -18,6 +18,8 @@ const BUSINESS_TABLES = [
   'operations',
   'partner_banks',
   'postings',
+  'qr_codes',
+  'qr_refunds',
   'request_log',
   'tariffs',
   'transfer_templates',
@@ -33,11 +35,15 @@ const INTERNAL_TABLES = [
   'operator_sessions',
   'operators',
   'outbox_events',
+  'partners',
   'sbp_directory',
   'sbp_transfers',
   'scenario',
   'schema_migrations',
   'sessions',
+  'webhook_attempts',
+  'webhook_deliveries',
+  'webhook_delivery_marks',
 ];
 
 describe('таблицы банка по схемам', { skip: DATABASE_URL ? false : 'нужна TEST_DATABASE_URL' }, () => {

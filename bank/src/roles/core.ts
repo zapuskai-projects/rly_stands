@@ -13,6 +13,7 @@ import { RoutingTransport } from '../events/transport';
 import { startAutopayScheduler } from '../autopayments/autopay-scheduler';
 import { bankMetrics } from '../metrics/bank-metrics';
 import { databaseReleaseSource } from '../release/release-source';
+import { expireQrCodes } from '../qr/qr-sweep';
 import { expireOverdueReviews } from '../review/review.service';
 import { loadBankClock, startClockSync } from '../scenario/bank-time';
 import { loadScenarioLabel } from '../scenario/scenario.repository';
@@ -22,6 +23,8 @@ import { seedIfEmpty } from '../seed/seed';
 import { bindLogContext } from '../shared/log-shipper';
 import { logger } from '../shared/logger';
 import { Readiness } from '../shared/readiness';
+import { startWebhookDispatcher } from '../webhooks/webhook-dispatcher';
+import { createHttpWebhookSender } from '../webhooks/webhook-sender';
 import { connectDatabase, onShutdown } from './common';
 
 const REVIEW_SWEEP_INTERVAL_MS = 2000;
@@ -61,13 +64,14 @@ export async function runCore(config: Config): Promise<void> {
   const gateway = new HttpSbpGateway(config.sbpUrl as string, config.sbpTimeoutMs);
   const dispatcher = startSbpDispatcher(deps, gateway, config.sbpTimeoutMs);
   const autopayments = startAutopayScheduler({ ...deps, lookupRecipient: gateway.lookup }, databaseReleaseSource(pool));
+  const webhooks = startWebhookDispatcher({ pool, clock, send: createHttpWebhookSender() });
   let sweeping = false;
   const sweeper = setInterval(() => {
     if (sweeping) return;
     sweeping = true;
-    expireOverdueReviews(deps)
+    Promise.all([expireOverdueReviews(deps), expireQrCodes(deps)])
       .catch((error: unknown) => {
-        logger.warn('review sweep failed', { error: error instanceof Error ? error.message : String(error) });
+        logger.warn('expiry sweep failed', { error: error instanceof Error ? error.message : String(error) });
       })
       .finally(() => {
         sweeping = false;
@@ -92,6 +96,7 @@ export async function runCore(config: Config): Promise<void> {
   onShutdown(async () => {
     clearInterval(sweeper);
     autopayments.stop();
+    await webhooks.stop();
     clockSync.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await Promise.all([publisher.stop(), decisions.stop(), notifications.stop(), dispatcher.stop()]);

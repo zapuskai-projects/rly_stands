@@ -3,14 +3,16 @@ import { useSearchParams } from 'react-router-dom';
 import { Empty, ErrorBox, Loading } from '../components/States';
 import { officeApi } from '../lib/api';
 import { useAsync, useDocumentTitle } from '../lib/hooks';
-import { STATUS_LABEL, TYPE_LABEL } from '../lib/status';
-import type { OfficeOperationRow, OperationStatus, OperationType, Page } from '../lib/types';
+import { useBankRelease } from '../lib/release';
+import { STATUS_LABEL, TYPE_LABEL, typeFilterOptions } from '../lib/status';
+import type { OfficeOperationRow, OperationStatus, Page } from '../lib/types';
 import { OfficeOperationTable } from './OfficeOperationTable';
 
 const PAGE_SIZE = 20;
 
 export function OperationsPage() {
   useDocumentTitle('Операции · ЗапускБанк');
+  const release = useBankRelease();
   const [params] = useSearchParams();
   const [number, setNumber] = useState(params.get('number') ?? '');
   const [clientNumber, setClientNumber] = useState('');
@@ -55,7 +57,7 @@ export function OperationsPage() {
           <label htmlFor="op-type">Вид</label>
           <select id="op-type" className="input" value={type} onChange={(event) => { setType(event.target.value); setOffset(0); }} data-testid="operation-type-filter">
             <option value="">Любой</option>
-            {(Object.keys(TYPE_LABEL) as OperationType[]).map((value) => <option key={value} value={value}>{TYPE_LABEL[value]}</option>)}
+            {typeFilterOptions(release).map((value) => <option key={value} value={value}>{TYPE_LABEL[value]}</option>)}
           </select>
         </div>
       </form>

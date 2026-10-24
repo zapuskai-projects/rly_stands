@@ -50,10 +50,17 @@ export function loadDocuments(directory: string): BankDocument[] {
   return documents.sort((a, b) => (a.slug === RELEASE_NOTES ? 1 : b.slug === RELEASE_NOTES ? -1 : a.title.localeCompare(b.title, 'ru')));
 }
 
+const NOTES_HEADING = /^##\s+([0-9]+\.[0-9]+\.[0-9]+)\s*$/m;
+
 export function documentsForRelease(documents: BankDocument[], current: Release): BankDocument[] {
   return documents
     .filter((item) => item.release === undefined || releaseAtLeast(current, item.release))
-    .map((item) => ({ ...item, markdown: filterMarkdown(item.markdown, current, item.slug === RELEASE_NOTES) }));
+    .map((item) => {
+      const notes = item.slug === RELEASE_NOTES;
+      const markdown = filterMarkdown(item.markdown, current, notes);
+      const version = notes ? (NOTES_HEADING.exec(markdown)?.[1] ?? item.version) : item.version;
+      return { ...item, version, markdown };
+    });
 }
 
 function specVersion(file: string): string {
@@ -68,6 +75,15 @@ export function mountDocsContent(app: Express, directory: string, releases: Rele
       { id: 'openapi', title: 'Контракт API (OpenAPI)', version: specVersion(path.join(directory, 'openapi.yaml')), href: '/api/docs', rawHref: '/api/openapi.yaml' },
       { id: 'asyncapi', title: 'События (AsyncAPI)', version: specVersion(path.join(directory, 'asyncapi.yaml')), href: '/api/asyncapi.yaml', rawHref: '/api/asyncapi.yaml' },
     ];
+    if (await releases.atLeast('1.2')) {
+      specs.push({
+        id: 'partner-openapi',
+        title: 'Партнёрское API (OpenAPI)',
+        version: specVersion(path.join(directory, 'partner-openapi.yaml')),
+        href: '/api/partner-docs',
+        rawHref: '/api/partner-openapi.yaml',
+      });
+    }
     res.json({ documents: (await visible()).map(({ slug, title, version, updated }) => ({ slug, title, version, updated })), specs });
   });
   app.get('/docs-content/:slug', async (req: Request, res: Response) => {

@@ -6,6 +6,7 @@ import { HistoryPage } from './bank/HistoryPage';
 import { HomePage } from './bank/HomePage';
 import { LoginPage } from './bank/LoginPage';
 import { OperationPage } from './bank/OperationPage';
+import { QrPayPage } from './bank/QrPayPage';
 import { StatementPage } from './bank/StatementPage';
 import { TemplateEditPage } from './bank/TemplateEditPage';
 import { TemplateTransferPage } from './bank/TemplateTransferPage';
@@ -51,6 +52,7 @@ export function App() {
         <Route path="/templates/:id/transfer" element={<ReleaseGate required="1.1"><TemplateTransferPage /></ReleaseGate>} />
         <Route path="/templates/:id/edit" element={<ReleaseGate required="1.1"><TemplateEditPage /></ReleaseGate>} />
         <Route path="/autopayments" element={<ReleaseGate required="1.1"><AutopaymentsPage /></ReleaseGate>} />
+        <Route path="/qr" element={<ReleaseGate required="1.2"><QrPayPage /></ReleaseGate>} />
       </Route>
       <Route path="/office/login" element={<OfficeLogin />} />
       <Route path="/office" element={<Guard realm="office"><OfficeLayout /></Guard>}>

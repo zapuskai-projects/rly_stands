@@ -13,6 +13,7 @@ const NAV = [
   { to: '/', label: 'Главная', testId: 'nav-home', end: true },
   { to: '/transfer', label: 'Переводы', testId: 'nav-transfer', end: false },
   { to: '/autopayments', label: 'Автоплатежи', testId: 'nav-autopayments', end: false, release: '1.1' },
+  { to: '/qr', label: 'Оплата по QR', testId: 'nav-qr', end: false, release: '1.2' },
   { to: '/history', label: 'История', testId: 'nav-history', end: false },
   { to: '/statement', label: 'Выписка', testId: 'nav-statement', end: false },
 ];
@@ -20,7 +21,7 @@ const NAV = [
 export function BankLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const flow = pathname.startsWith('/transfer') || pathname.startsWith('/operations/') || pathname.startsWith('/templates/');
+  const flow = pathname.startsWith('/transfer') || pathname.startsWith('/operations/') || pathname.startsWith('/templates/') || pathname.startsWith('/qr');
   const release = useBankRelease();
   const state = useAsync(() => clientApi.get<Profile>('/api/v1/me'), []);
 

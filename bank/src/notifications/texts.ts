@@ -3,7 +3,7 @@ import { maskPhone } from '../clients/names';
 import { BANK } from '../shared/bank-identity';
 
 export interface CompletedTransferFacts {
-  type: 'OWN_TRANSFER' | 'PHONE_TRANSFER';
+  type: 'OWN_TRANSFER' | 'PHONE_TRANSFER' | 'QR_PAYMENT' | 'QR_REFUND';
   amount: Kopecks;
   operationNumber: string;
   recipientName: string | null;
@@ -30,6 +30,13 @@ function describeRecipient(facts: CompletedTransferFacts): string {
 
 export function senderTexts(facts: CompletedTransferFacts): ChannelTexts {
   const amount = formatRubles(facts.amount);
+  if (facts.type === 'QR_PAYMENT') {
+    const shop = facts.recipientName ? ` в «${facts.recipientName}»` : '';
+    return {
+      sms: `${BANK.name}: оплата по QR ${amount}${shop} выполнена. Операция ${facts.operationNumber}.`,
+      push: `Оплата по QR выполнена: ${amount}${shop}`,
+    };
+  }
   const where = describeRecipient(facts);
   return {
     sms: `${BANK.name}: перевод ${amount} ${where} выполнен. Операция ${facts.operationNumber}.`,
@@ -42,5 +49,13 @@ export function recipientTexts(facts: CompletedTransferFacts): ChannelTexts {
   return {
     sms: `${BANK.name}: вам поступил перевод ${amount}. ${endSentence(`Отправитель: ${facts.senderShortName}`)} Операция ${facts.operationNumber}.`,
     push: `Вам поступил перевод ${amount}. Отправитель: ${facts.senderShortName}`,
+  };
+}
+
+export function qrRefundTexts(facts: { amount: Kopecks; operationNumber: string; merchantName: string }): ChannelTexts {
+  const amount = formatRubles(facts.amount);
+  return {
+    sms: `${BANK.name}: возврат по QR ${amount} от «${facts.merchantName}». Операция ${facts.operationNumber}.`,
+    push: `Возврат по QR: ${amount} от «${facts.merchantName}»`,
   };
 }

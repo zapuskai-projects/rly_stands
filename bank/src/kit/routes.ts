@@ -6,7 +6,9 @@ import type { RequestJournal } from '../api/request-context';
 import type { RecipientNameLookup } from '../sbp/gateway';
 import { notFound } from '../shared/errors';
 import { runReview, runSetTariff, runTransfer } from './actions';
+import type { Release } from '../release/release';
 import { databaseReleaseSource, type ReleaseSource } from '../release/release-source';
+import { listDeliveryFacts, listQrFacts } from './qr-facts';
 import { listAutopayFacts, runKitAutopay } from './autopay';
 import { createCheckClient } from './check-client';
 import { findLedgerFact, findOperationFact, listInconsistentAccounts, listOperationFacts, listRequestFacts } from './facts';
@@ -53,8 +55,8 @@ function normalizePhoneQuery(query: Request['query']): Record<string, unknown> {
   return { ...query, ...(phone === undefined ? {} : { phone: phone.startsWith('+') ? phone : `+${phone}` }) };
 }
 
-async function requireTemplatesRelease(releases: ReleaseSource, req: Request): Promise<void> {
-  if (!(await releases.atLeast('1.1'))) throw notFoundError(req);
+async function requireKitRelease(releases: ReleaseSource, req: Request, required: Release): Promise<void> {
+  if (!(await releases.atLeast(required))) throw notFoundError(req);
 }
 
 export function mountKit(app: Express, deps: KitDeps): void {
@@ -101,7 +103,7 @@ export function mountKit(app: Express, deps: KitDeps): void {
   });
 
   router.post('/actions/autopay-run', async (req, res) => {
-    await requireTemplatesRelease(releases, req);
+    await requireKitRelease(releases, req, '1.1');
     const input = parseKit(kitSchemas.autopayRunAction, req.body);
     res.locals.attemptLabel = input.label;
     const result = await runKitAutopay(deps, input.autopaymentId, input.label, String(res.locals.requestId));
@@ -111,8 +113,19 @@ export function mountKit(app: Express, deps: KitDeps): void {
   });
 
   router.get('/facts/autopayments', async (req, res) => {
-    await requireTemplatesRelease(releases, req);
+    await requireKitRelease(releases, req, '1.1');
     res.json(await listAutopayFacts(deps.pool, parseKit(kitSchemas.autopaymentsQuery, normalizePhoneQuery(req.query))));
+  });
+
+  router.get('/facts/qr', async (req, res) => {
+    await requireKitRelease(releases, req, '1.2');
+    const filter = parseKit(kitSchemas.qrQuery, req.query);
+    res.json(await listQrFacts(deps.pool, deps.clock, filter));
+  });
+
+  router.get('/facts/webhook-deliveries', async (req, res) => {
+    await requireKitRelease(releases, req, '1.2');
+    res.json(await listDeliveryFacts(deps.pool, deps.clock, parseKit(kitSchemas.deliveriesQuery, req.query)));
   });
 
   router.get('/facts/operations', async (req, res) => {

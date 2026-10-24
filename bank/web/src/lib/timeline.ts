@@ -18,6 +18,12 @@ const REJECTION_LABEL: Record<string, string> = {
   ANTIFRAUD_REJECTED: 'Антифрод отклонил перевод',
 };
 
+const QR_REJECTION_LABEL: Record<string, string> = {
+  OPERATOR_REJECTED: 'Специалист отклонил оплату',
+  REVIEW_EXPIRED: 'Срок проверки истёк, оплата отклонена',
+  ANTIFRAUD_REJECTED: 'Антифрод отклонил оплату',
+};
+
 function atOf(history: readonly StatusHistoryItem[], status: string): string | null {
   return history.find((item) => item.status === status)?.at ?? null;
 }
@@ -27,21 +33,22 @@ export function buildTimeline(operation: Pick<Operation, 'type' | 'route' | 'sta
   const steps: TimelineStep[] = [{ key: 'created', label: 'Создан', state: 'done', at: atOf(history, 'CREATED') }];
   const rejectedAt = atOf(history, 'REJECTED');
   const rejectionCode = operation.rejection?.code ?? '';
+  const qr = operation.type === 'QR_PAYMENT' || operation.type === 'QR_REFUND';
 
   if (status === 'REJECTED' && RULE_REJECTIONS.includes(rejectionCode)) {
-    steps.push({ key: 'rules', label: 'Лимиты и ограничения: перевод не прошёл проверку', state: 'failed', at: rejectedAt });
+    steps.push({ key: 'rules', label: qr ? 'Ограничения по счёту: оплата не прошла проверку' : 'Лимиты и ограничения: перевод не прошёл проверку', state: 'failed', at: rejectedAt });
     return steps;
   }
-  steps.push({ key: 'rules', label: 'Лимиты и комиссия проверены', state: 'done', at: atOf(history, 'CHECKING') });
+  steps.push({ key: 'rules', label: qr ? 'Ограничения по счёту проверены' : 'Лимиты и комиссия проверены', state: 'done', at: atOf(history, 'CHECKING') });
 
   const reviewAt = atOf(history, 'ON_REVIEW');
   if (status === 'REJECTED') {
     if (reviewAt) steps.push({ key: 'review', label: 'Нужна проверка специалиста', state: 'done', warn: true, at: reviewAt });
-    steps.push({ key: 'rejected', label: REJECTION_LABEL[rejectionCode] ?? 'Перевод отклонён', state: 'failed', at: rejectedAt });
+    steps.push({ key: 'rejected', label: (qr ? QR_REJECTION_LABEL : REJECTION_LABEL)[rejectionCode] ?? (qr ? 'Оплата отклонена' : 'Перевод отклонён'), state: 'failed', at: rejectedAt });
     return steps;
   }
 
-  if (operation.type === 'PHONE_TRANSFER') {
+  if (operation.type === 'PHONE_TRANSFER' || operation.type === 'QR_PAYMENT') {
     if (reviewAt) {
       steps.push({
         key: 'review',
@@ -66,15 +73,16 @@ export function buildTimeline(operation: Pick<Operation, 'type' | 'route' | 'sta
     at: processingAt,
   });
 
+  const finalLabel = operation.type === 'OWN_TRANSFER' ? 'Зачислено на счёт' : operation.type === 'QR_PAYMENT' ? 'Зачислено магазину' : operation.type === 'QR_REFUND' ? 'Возвращено покупателю' : 'Зачислено получателю';
   if (status === 'COMPLETED') {
-    steps.push({ key: 'final', label: operation.type === 'OWN_TRANSFER' ? 'Зачислено на счёт' : 'Зачислено получателю', state: 'done', at: atOf(history, 'COMPLETED') });
+    steps.push({ key: 'final', label: finalLabel, state: 'done', at: atOf(history, 'COMPLETED') });
   } else if (status === 'FAILED') {
     const reason = history.find((item) => item.status === 'FAILED')?.reasonCode;
     steps.push({ key: 'final', label: reason === 'SBP_UNAVAILABLE' ? 'СБП недоступна, перевод не отправлен' : 'Банк получателя не принял перевод', state: 'failed', at: atOf(history, 'FAILED') });
   } else if (status === 'REFUNDED') {
     steps.push({ key: 'final', label: 'Деньги возвращены на счёт', state: 'done', warn: true, at: atOf(history, 'REFUNDED') });
   } else {
-    steps.push({ key: 'final', label: operation.type === 'OWN_TRANSFER' ? 'Зачислено на счёт' : 'Зачислено получателю', state: 'pending', at: null });
+    steps.push({ key: 'final', label: finalLabel, state: 'pending', at: null });
   }
   return steps;
 }

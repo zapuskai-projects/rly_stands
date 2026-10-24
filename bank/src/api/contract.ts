@@ -25,6 +25,7 @@ export interface ParamSpec {
   required: boolean;
   coerce: 'number' | null;
   validator: Validator;
+  releaseValues: { enumValues: string[]; since: Record<string, Release> } | null;
 }
 
 export interface OperationSpec {
@@ -32,7 +33,7 @@ export interface OperationSpec {
   method: HttpMethod;
   openApiPath: string;
   expressPath: string;
-  auth: 'NONE' | 'CLIENT' | 'OPERATOR';
+  auth: 'NONE' | 'CLIENT' | 'OPERATOR' | 'PARTNER';
   release: Release | null;
   params: ParamSpec[];
   body: { required: boolean; validator: Validator } | null;
@@ -134,6 +135,16 @@ function schemaType(schema: JsonObject, defs: JsonObject): unknown {
   return name ? asObject(defs[name], name).type : schema.type;
 }
 
+function releaseValuesOf(schema: JsonObject, defs: JsonObject): ParamSpec['releaseValues'] {
+  const name = refName(schema);
+  const target = name ? asObject(defs[name], name) : schema;
+  const marks = target['x-release-values'];
+  if (!isObject(marks) || !Array.isArray(target.enum)) return null;
+  const since: Record<string, Release> = {};
+  for (const [value, release] of Object.entries(marks)) since[value] = parseRelease(String(release), `Контракт: значение ${value}`);
+  return { enumValues: target.enum.map(String), since };
+}
+
 function compileParams(document: JsonObject, rawParams: unknown, compiler: SchemaCompiler, defs: JsonObject): ParamSpec[] {
   const list = Array.isArray(rawParams) ? rawParams : [];
   return list.map((raw): ParamSpec => {
@@ -146,6 +157,7 @@ function compileParams(document: JsonObject, rawParams: unknown, compiler: Schem
       required: param.required === true,
       coerce: type === 'integer' || type === 'number' ? 'number' : null,
       validator: compiler.compile(schema),
+      releaseValues: releaseValuesOf(schema, defs),
     };
   });
 }
@@ -163,7 +175,8 @@ function compileResponses(document: JsonObject, raw: unknown, compiler: SchemaCo
 function authKind(security: unknown[]): OperationSpec['auth'] {
   const first = security[0];
   if (!isObject(first)) return 'NONE';
-  return 'operatorAuth' in first ? 'OPERATOR' : 'CLIENT';
+  if ('operatorAuth' in first) return 'OPERATOR';
+  return 'partnerKey' in first ? 'PARTNER' : 'CLIENT';
 }
 
 function toExpressPath(openApiPath: string): string {

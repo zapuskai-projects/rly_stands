@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { OPENAPI_PATH } from '../config';
+import { releaseAtLeast } from '../release/release';
 import { KIT_TEST_SECRET, startHarness, type Harness } from '../testing/harness';
 import { accountOf, NOON_MOSCOW, PHONES, phoneTransfer } from '../testing/scenarios';
 import { loadContract, type OperationSpec } from './contract';
@@ -30,7 +31,7 @@ describe('каждый ответ банка описан в контракте'
     await h.close();
   });
 
-  for (const release of ['1.0', '1.1'] as const) {
+  for (const release of ['1.0', '1.1', '1.2'] as const) {
     it(`релиз ${release}: обход всех операций контракта разными токенами, ключами и испорченными запросами не даёт ни одного статуса, которого нет в описании, а операции следующего релиза отвечают как несуществующие`, async () => {
       await h.pool.query('UPDATE scenario SET release = $1 WHERE id = 1', [release]);
       const contract = loadContract(OPENAPI_PATH);
@@ -48,10 +49,10 @@ describe('каждый ответ банка описан в контракте'
       const hit = async (operation: OperationSpec, token: string | null, path: string, body: unknown, headers: Record<string, string>) => {
         const response = await h.api(token, operation.method.toUpperCase(), path, body, headers);
         requests += 1;
-        if (release === '1.0' && operation.release !== null) {
+        if (operation.release !== null && !releaseAtLeast(release, operation.release)) {
           const code = (response.body as { code?: string } | null)?.code;
         const unparsable = response.status === 400 && code === 'MALFORMED_JSON';
-        if (!unparsable && (response.status !== 404 || code !== 'NOT_FOUND')) violations.add(`${operation.method.toUpperCase()} ${operation.openApiPath} → ${response.status} на релизе 1.0`);
+        if (!unparsable && (response.status !== 404 || code !== 'NOT_FOUND')) violations.add(`${operation.method.toUpperCase()} ${operation.openApiPath} → ${response.status} на релизе ${release}`);
         } else if (!operation.responses.has(response.status)) {
           violations.add(`${operation.method.toUpperCase()} ${operation.openApiPath} → ${response.status}`);
         }

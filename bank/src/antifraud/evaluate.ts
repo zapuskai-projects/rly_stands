@@ -8,7 +8,7 @@ import { decideByScore, scorePayment } from './scoring';
 import { loadThresholds } from './settings.repository';
 
 export async function evaluatePayment(db: Db, clock: BankClock, payload: PaymentCreatedPayload): Promise<AntifraudDecisionPayload | null> {
-  if (payload.type !== 'PHONE_TRANSFER') return null;
+  if (payload.type !== 'PHONE_TRANSFER' && payload.type !== 'QR_PAYMENT') return null;
   const awaiting = await loadAwaitingPayment(db, payload.operationId);
   if (!awaiting) return null;
   const thresholds = await loadThresholds(db);

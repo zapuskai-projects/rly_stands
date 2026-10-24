@@ -6,6 +6,8 @@ import type { BankClock } from '../../clock/bank-clock';
 import { findClientById, findDailyLimitOverride } from '../../clients/clients.repository';
 import { findOfficeClient, listOfficeClients, setDailyLimitOverride } from '../../office/clients.repository';
 import { listClientRecentOperations } from '../../office/operations.repository';
+import { hiddenOperationTypes } from '../../release/release';
+import type { ReleaseSource } from '../../release/release-source';
 import { forbidden, notFound } from '../../shared/errors';
 import { getTariff } from '../../tariffs/tariffs.repository';
 import { listClientTemplates } from '../../templates/templates.repository';
@@ -18,6 +20,7 @@ import type { Handler, HandlerContext } from '../router';
 interface Deps {
   pool: Pool;
   clock: BankClock;
+  releases: ReleaseSource;
 }
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -30,7 +33,7 @@ async function existingClientId(pool: Pool, ctx: HandlerContext): Promise<string
   return clientId;
 }
 
-async function clientDetails(pool: Pool, clock: BankClock, clientId: string) {
+async function clientDetails(pool: Pool, clock: BankClock, releases: ReleaseSource, clientId: string) {
   const row = await findOfficeClient(pool, clientId);
   const client = await findClientById(pool, clientId);
   if (!row || !client) throw notFound('CLIENT_NOT_FOUND', 'Клиент не найден');
@@ -39,7 +42,7 @@ async function clientDetails(pool: Pool, clock: BankClock, clientId: string) {
   const tariff = await getTariff(pool, client.tariffCode);
   const limits = await buildClientLimits(pool, client, tariff, clock.now());
   const override = await findDailyLimitOverride(pool, clientId);
-  const recent = await listClientRecentOperations(pool, clientId, RECENT_OPERATIONS);
+  const recent = await listClientRecentOperations(pool, clientId, RECENT_OPERATIONS, hiddenOperationTypes(await releases.current()));
   return {
     client: officeClientDto(row),
     accounts: accounts.map((account) => {
@@ -62,7 +65,7 @@ async function clientDetails(pool: Pool, clock: BankClock, clientId: string) {
   };
 }
 
-export function officeClientHandlers({ pool, clock }: Deps): Record<string, Handler> {
+export function officeClientHandlers({ pool, clock, releases }: Deps): Record<string, Handler> {
   return {
     listOfficeClients: async (ctx) => {
       const limit = (ctx.query.limit as number | undefined) ?? DEFAULT_PAGE_SIZE;
@@ -71,7 +74,7 @@ export function officeClientHandlers({ pool, clock }: Deps): Record<string, Hand
       const { rows, total } = await listOfficeClients(pool, query, limit, offset);
       return { status: 200, body: { items: rows.map(officeClientDto), total, limit, offset } };
     },
-    getOfficeClient: async (ctx) => ({ status: 200, body: await clientDetails(pool, clock, clientIdOf(ctx)) }),
+    getOfficeClient: async (ctx) => ({ status: 200, body: await clientDetails(pool, clock, releases, clientIdOf(ctx)) }),
     listOfficeClientTemplates: async (ctx) => {
       const clientId = await existingClientId(pool, ctx);
       return { status: 200, body: { items: (await listClientTemplates(pool, clientId)).map(templateDto) } };
@@ -93,7 +96,7 @@ export function officeClientHandlers({ pool, clock }: Deps): Record<string, Hand
       if (!(await findClientById(pool, clientId))) throw notFound('CLIENT_NOT_FOUND', 'Клиент не найден');
       const value = (ctx.body as { dailyPhoneTransferLimit: number | null }).dailyPhoneTransferLimit;
       await setDailyLimitOverride(pool, clientId, value === null ? null : fromApiAmount(value));
-      return { status: 200, body: await clientDetails(pool, clock, clientId) };
+      return { status: 200, body: await clientDetails(pool, clock, releases, clientId) };
     },
   };
 }

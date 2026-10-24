@@ -26,6 +26,7 @@ export interface CreatedEventInput {
   requestId: string;
   amountInRubles?: boolean;
   templateId?: string | null;
+  qrId?: string | null;
 }
 
 export function paymentCreatedMessage(input: CreatedEventInput): OutboxMessage {
@@ -43,6 +44,7 @@ export function paymentCreatedMessage(input: CreatedEventInput): OutboxMessage {
     recipientPhone: input.recipientPhone,
     recipientBankCode: input.recipientBankCode,
     ...(input.templateId === undefined ? {} : { templateId: input.templateId }),
+    ...(input.qrId === undefined ? {} : { qrId: input.qrId }),
     createdAt: toMoscowIso(input.createdAt),
   };
   return {

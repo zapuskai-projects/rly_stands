@@ -4,6 +4,7 @@ import { findClientById } from '../../clients/clients.repository';
 import { listOfficeOperations, type OfficeOperationFilter } from '../../office/operations.repository';
 import { findOperationOfAnyClient, loadStatusHistories, type OperationType } from '../../payments/operations.repository';
 import type { OperationStatus } from '../../payments/status';
+import { hiddenOperationTypes } from '../../release/release';
 import type { ReleaseSource } from '../../release/release-source';
 import { findReviewItem } from '../../review/review.repository';
 import { notFound } from '../../shared/errors';
@@ -27,13 +28,15 @@ export function officeOperationHandlers(pool: Pool, releases: ReleaseSource): Re
     listOfficeOperations: async (ctx) => {
       const limit = (ctx.query.limit as number | undefined) ?? DEFAULT_PAGE_SIZE;
       const offset = (ctx.query.offset as number | undefined) ?? 0;
-      const { rows, total } = await listOfficeOperations(pool, toFilter(ctx.query), limit, offset);
+      const filter = { ...toFilter(ctx.query), excludeTypes: hiddenOperationTypes(await releases.current()) };
+      const { rows, total } = await listOfficeOperations(pool, filter, limit, offset);
       return { status: 200, body: { items: rows.map(officeOperationRowDto), total, limit, offset } };
     },
     getOfficeOperation: async (ctx) => {
       const operationId = String(ctx.params.operationId);
+      const release = await releases.current();
       const operation = await findOperationOfAnyClient(pool, operationId);
-      if (!operation) throw notFound('OPERATION_NOT_FOUND', 'Операция не найдена');
+      if (!operation || hiddenOperationTypes(release).some((type) => type === operation.type)) throw notFound('OPERATION_NOT_FOUND', 'Операция не найдена');
       const client = await findClientById(pool, operation.clientId);
       const histories = await loadStatusHistories(pool, [operation.id]);
       const decision = await findDecision(pool, operation.id);
@@ -42,7 +45,7 @@ export function officeOperationHandlers(pool: Pool, releases: ReleaseSource): Re
         status: 200,
         operationId,
         body: {
-          operation: operationDto(operation, histories.get(operation.id) ?? [], await releases.atLeast('1.1')),
+          operation: operationDto(operation, histories.get(operation.id) ?? [], release),
           client: { number: client?.number ?? '', fullName: client?.fullName ?? '' },
           antifraud: decision ? antifraudResultDto(decision) : null,
           review: review ? reviewItemDto(review) : null,

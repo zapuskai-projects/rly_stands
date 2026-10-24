@@ -16,6 +16,7 @@ type Service = {
   ports?: string[];
   volumes?: string[];
   restart?: string;
+  extra_hosts?: string[];
 };
 
 type Compose = {
@@ -92,6 +93,12 @@ describe('compose.yaml набора', () => {
       const labels = (volume as { labels?: Record<string, string> }).labels;
       assert.ok(labels?.['stands.kit.module'], name);
     }
+  });
+});
+
+describe('доступ банка к компьютеру студента', () => {
+  it('ядро банка видит host.docker.internal: по этому адресу банк шлёт уведомления магазина', () => {
+    assert.deepEqual(compose.services['kit-bank-core']?.extra_hosts, ['host.docker.internal:host-gateway']);
   });
 });
 

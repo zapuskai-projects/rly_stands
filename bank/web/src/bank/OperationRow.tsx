@@ -6,6 +6,8 @@ import type { Operation } from '../lib/types';
 
 export function recipientTitle(operation: Operation): string {
   if (operation.type === 'OWN_TRANSFER') return 'Между своими счетами';
+  if (operation.type === 'QR_PAYMENT') return `${operation.recipient.displayName ?? 'Магазин'} · оплата по QR`;
+  if (operation.type === 'QR_REFUND') return `${operation.recipient.displayName ?? 'Покупатель'} · возврат по QR`;
   const who = operation.recipient.displayName ?? (operation.recipient.phone ? formatPhone(operation.recipient.phone) : 'Получатель');
   return `${who} · по номеру телефона`;
 }

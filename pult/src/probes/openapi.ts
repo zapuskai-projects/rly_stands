@@ -35,6 +35,9 @@ function failedLoad(loaded: Extract<LoadedDocument, { ok: false }>) {
     info: { title: '', version: '' },
     methods: [],
     schemas: [],
+    securitySchemes: [],
+    methodsWithoutHeaderKey: [],
+    notifications: [],
   };
 }
 
@@ -58,6 +61,50 @@ function describeResponseBodies(doc: Record<string, unknown>, responses: unknown
   }));
 }
 
+function securitySchemes(doc: Record<string, unknown>) {
+  return Object.entries(asRecord(asRecord(doc.components).securitySchemes)).map(([name, scheme]) => {
+    const item = asRecord(resolveRef(doc, scheme));
+    return { name, type: str(item.type), in: str(item.in), paramName: str(item.name) };
+  });
+}
+
+function keyHeadersOf(doc: Record<string, unknown>, security: unknown): string[] {
+  const schemes = securitySchemes(doc);
+  const names = asArray(security).flatMap((requirement) => Object.keys(asRecord(requirement)));
+  return [...new Set(names)]
+    .map((name) => schemes.find((scheme) => scheme.name === name))
+    .filter((scheme): scheme is NonNullable<typeof scheme> => scheme?.type === 'apiKey' && scheme.in === 'header')
+    .map((scheme) => scheme.paramName);
+}
+
+function headerNames(doc: Record<string, unknown>, ...lists: unknown[]): string[] {
+  return lists
+    .flatMap((list) => asArray(list))
+    .map((parameter) => asRecord(resolveRef(doc, parameter)))
+    .filter((parameter) => parameter.in === 'header')
+    .map((parameter) => str(parameter.name));
+}
+
+function notificationsOf(name: string, source: string, doc: Record<string, unknown>, node: unknown) {
+  const pathItem = asRecord(resolveRef(doc, node));
+  return HTTP_METHODS.map((method) => asRecord(resolveRef(doc, pathItem[method])))
+    .filter((operation) => Object.keys(operation).length)
+    .map((operation) => ({ name, source, headers: headerNames(doc, pathItem.parameters, operation.parameters) }));
+}
+
+function describeNotifications(doc: Record<string, unknown>) {
+  const fromWebhooks = Object.entries(asRecord(doc.webhooks)).flatMap(([name, item]) => notificationsOf(name, 'webhooks', doc, item));
+  const fromCallbacks = Object.values(asRecord(doc.paths)).flatMap((item) =>
+    HTTP_METHODS.flatMap((method) => {
+      const operation = asRecord(resolveRef(doc, asRecord(resolveRef(doc, item))[method]));
+      return Object.entries(asRecord(operation.callbacks)).flatMap(([name, callback]) =>
+        Object.values(asRecord(resolveRef(doc, callback))).flatMap((expression) => notificationsOf(name, 'callbacks', doc, expression)),
+      );
+    }),
+  );
+  return [...fromWebhooks, ...fromCallbacks];
+}
+
 function describeMethods(doc: Record<string, unknown>) {
   const methods: Array<Record<string, unknown>> = [];
   for (const [path, item] of Object.entries(asRecord(doc.paths))) {
@@ -78,6 +125,7 @@ function describeMethods(doc: Record<string, unknown>) {
         operationId: typeof operation.operationId === 'string' ? operation.operationId : null,
         parameters,
         responses: Object.keys(asRecord(operation.responses)),
+        keyHeaders: keyHeadersOf(doc, operation.security ?? doc.security),
         requestBody: describeRequestBody(doc, operation.requestBody),
         responseBodies: describeResponseBodies(doc, operation.responses),
       });
@@ -102,12 +150,18 @@ export function describeOpenApi(loaded: LoadedDocument) {
     return { ...failedLoad({ ok: false, errors: ['нет поля openapi — это не OpenAPI 3-файл'] }) };
   }
   const info = asRecord(doc.info);
+  const methods = describeMethods(doc);
   return {
     parsed: true,
     errors: [],
     info: { title: str(info.title), version: str(info.version) },
-    methods: describeMethods(doc),
+    methods,
     schemas: describeSchemas(doc),
+    securitySchemes: securitySchemes(doc),
+    methodsWithoutHeaderKey: methods
+      .filter((method) => !(method.keyHeaders as string[]).length)
+      .map((method) => `${str(method.method).toUpperCase()} ${str(method.path)}`),
+    notifications: describeNotifications(doc),
   };
 }
 
@@ -212,24 +266,27 @@ export async function lintOpenApi(absolute: string) {
   };
 }
 
-async function breaking(base: string, revision: string) {
-  const result = await run('oasdiff', ['breaking', base, revision, '--format', 'json'], { timeoutMs: LINT_TIMEOUT_MS });
+export function interpretBreaking(result: { code: number | null; stdout: string; stderr: string }) {
   if (result.code !== 0 && !result.stdout.trim().startsWith('[')) {
-    const reason = (result.stderr || result.stdout).trim().split('\n')[0] ?? 'oasdiff завершился с ошибкой';
-    if (/no such file|executable file not found|ENOENT/i.test(reason)) throw new ProbeError('Проверка ломающих изменений недоступна: в образе пульта нет oasdiff');
+    const reason = (result.stderr || result.stdout).trim().split('\n')[0] || 'oasdiff завершился с ошибкой';
+    if (/no such file|executable file not found|ENOENT|: not found/i.test(reason)) throw new ProbeError('Проверка ломающих изменений недоступна: в образе пульта нет oasdiff');
     return { count: 0, breaking: [], error: reason.slice(0, 300) };
   }
-  let changes: unknown[] = [];
+  let changes: unknown[];
   try {
     changes = asArray(JSON.parse(result.stdout.trim() || '[]'));
   } catch {
-    changes = [];
+    return { count: 0, breaking: [], error: 'oasdiff вернул ответ, который не разобрать' };
   }
   const list = changes.map((item) => {
     const row = asRecord(item);
     return { id: str(row.id), text: str(row.text), level: num(row.level) };
   });
   return { count: list.length, breaking: list, error: null };
+}
+
+async function breaking(base: string, revision: string) {
+  return interpretBreaking(await run('oasdiff', ['breaking', base, revision, '--format', 'json'], { timeoutMs: LINT_TIMEOUT_MS }));
 }
 
 export const OPENAPI_EXECUTORS: ExecutorTable = {

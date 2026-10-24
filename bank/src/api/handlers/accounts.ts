@@ -10,6 +10,8 @@ import { buildStatement } from '../../accounts/statement';
 import type { BankClock } from '../../clock/bank-clock';
 import { moscowDateKey, moscowMonthStart, moscowNextDayStart, parseMoscowDate } from '../../clock/moscow';
 import { findClientById } from '../../clients/clients.repository';
+import { hiddenOperationTypes } from '../../release/release';
+import type { ReleaseSource } from '../../release/release-source';
 import { badRequest, notFound } from '../../shared/errors';
 import { getTariff } from '../../tariffs/tariffs.repository';
 import { accountDto, profileDto, statementDto } from '../dto';
@@ -19,6 +21,7 @@ import type { Handler, HandlerContext } from '../router';
 interface Deps {
   pool: Pool;
   clock: BankClock;
+  releases: ReleaseSource;
 }
 
 const clientIdOf = (ctx: HandlerContext): string => (ctx.session as { clientId: string }).clientId;
@@ -35,7 +38,7 @@ async function loadAccountDto(pool: Pool, account: Account) {
   return accountDto(account, held, cards);
 }
 
-export function accountHandlers({ pool, clock }: Deps): Record<string, Handler> {
+export function accountHandlers({ pool, clock, releases }: Deps): Record<string, Handler> {
   return {
     getProfile: async (ctx) => {
       const client = await findClientById(pool, clientIdOf(ctx));
@@ -67,7 +70,7 @@ export function accountHandlers({ pool, clock }: Deps): Record<string, Handler> 
       const to = parseMoscowDate(toKey);
       if (!from || !to) throw badRequest('INVALID_PERIOD', 'Даты периода заданы неверно');
       if (from > to) throw badRequest('INVALID_PERIOD', 'Начало периода позже его конца');
-      const data = await buildStatement(pool, account, from, moscowNextDayStart(to));
+      const data = await buildStatement(pool, account, from, moscowNextDayStart(to), hiddenOperationTypes(await releases.current()));
       return { status: 200, body: statementDto(account, fromKey, toKey, data) };
     },
   };

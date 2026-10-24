@@ -1,0 +1,694 @@
+openapi: 3.1.0
+info:
+  title: ЗапускБанк · партнёрское API
+  version: 1.2.0
+  description: |
+    Программный интерфейс для магазинов, принимающих оплату по QR-коду. Магазин и покупатели вымышленные.
+
+    Все суммы передаются целым числом копеек: `150000` означает 1 500 рублей 00 копеек. Валюта — рубли.
+
+    Время банка — московское, в ответах оно приходит со смещением `+03:00`. Текущее время банка возвращается в заголовке `X-Bank-Time` каждого ответа.
+
+    Каждый запрос подписывается ключом магазина в заголовке `X-Partner-Key`. Без ключа или с неверным ключом банк отвечает 401.
+
+    Магазин выставляет QR-код (`POST /partner/v1/qr`), покупатель оплачивает его в интернет-банке, магазин узнаёт результат запросом `GET /partner/v1/qr/{qrId}` или получает уведомление на свой адрес (`PUT /partner/v1/webhook`). Оплату можно вернуть целиком или частями (`POST /partner/v1/qr/{qrId}/refunds`).
+
+    Уведомления о зачислении и возврате описаны в разделе `webhooks`: тело, заголовки `X-Signature` и `X-Event-Id`, правила повторной отправки.
+servers:
+  - url: /
+security:
+  - partnerKey: []
+tags:
+  - name: QR-коды
+  - name: Возвраты
+  - name: Уведомления
+paths:
+  /partner/v1/qr:
+    post:
+      tags: [QR-коды]
+      operationId: createPartnerQr
+      x-release: '1.2'
+      summary: Выставить QR-код
+      description: |
+        Создаёт QR-код на оплату заказа. В `payload` приходит содержимое кода: его показывают покупателю, интернет-банк принимает его вставкой.
+
+        Срок действия задаётся в секундах (`ttlSeconds`, от 60 до 3600, по умолчанию 600) и считается по часам банка. По истечении срока QR-код получает статус `EXPIRED`.
+
+        Повторный запрос с тем же `orderId` и той же суммой возвращает тот же QR-код с ответом 200. Тот же `orderId` с другой суммой — ошибка 409 `ORDER_ID_REUSED`.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQrRequest'
+            examples:
+              order:
+                summary: Заказ на 1 234,50 ₽
+                value:
+                  orderId: order-2026-0001
+                  amount: 123450
+                  description: Заказ №2026-0001
+                  ttlSeconds: 900
+      responses:
+        '201':
+          description: QR-код выставлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QrCode'
+        '200':
+          description: QR-код для этого заказа уже был выставлен, возвращён он же
+          headers:
+            Idempotent-Replayed:
+              description: Всегда `true`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QrCode'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /partner/v1/qr/{qrId}:
+    get:
+      tags: [QR-коды]
+      operationId: getPartnerQr
+      x-release: '1.2'
+      summary: Состояние QR-кода
+      description: |
+        Статус QR-кода, сумма, сколько оплачено и возвращено, операция оплаты и время оплаты. Пока QR-код не оплачен, `operationId`, `operationNumber` и `paidAt` равны `null`.
+
+        Статусы: `CREATED` — ждёт оплаты, `PAID` — оплачен, `PARTIALLY_REFUNDED` и `REFUNDED` — оплата возвращена частично или целиком, `EXPIRED` — срок действия истёк, `CANCELLED` — отменён магазином.
+      parameters:
+        - $ref: '#/components/parameters/QrIdPath'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: QR-код
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QrCode'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [QR-коды]
+      operationId: cancelPartnerQr
+      x-release: '1.2'
+      summary: Отменить QR-код
+      description: |
+        Отменяет QR-код, который ещё не оплачен: он получает статус `CANCELLED`, оплатить его нельзя. Повторная отмена уже отменённого QR-кода возвращает его же.
+
+        Оплаченный QR-код отменить нельзя (409 `QR_ALREADY_PAID`), просроченный — тоже (409 `QR_EXPIRED`).
+      parameters:
+        - $ref: '#/components/parameters/QrIdPath'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: QR-код отменён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QrCode'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /partner/v1/qr/{qrId}/refunds:
+    post:
+      tags: [Возвраты]
+      operationId: createPartnerQrRefund
+      x-release: '1.2'
+      summary: Вернуть оплату покупателю
+      description: |
+        Возвращает покупателю всю оплату или её часть: деньги переводятся с расчётного счёта магазина на счёт, с которого платил покупатель. Возвратов может быть несколько, пока их сумма не достигнет суммы оплаты. Комиссия банка за приём платежа магазину не возвращается.
+
+        После частичного возврата QR-код получает статус `PARTIALLY_REFUNDED`, после возврата всей суммы — `REFUNDED`. Покупателю приходит уведомление, магазину — уведомление `qr.refunded`.
+
+        Заголовок `Idempotency-Key` обязателен: повтор с тем же ключом и той же суммой возвращает тот же возврат ответом 200, с другой суммой — 422 `IDEMPOTENCY_KEY_REUSED`.
+
+        Отказы: `QR_NOT_FOUND` — QR-кода нет, `QR_NOT_PAID` — QR-код не оплачен, `REFUND_EXCEEDS_PAYMENT` — сумма возвратов больше оплаты, `INSUFFICIENT_FUNDS` — на расчётном счёте магазина не хватает денег, `ACCOUNT_ARRESTED` — на расчётный счёт магазина наложен арест, `CLIENT_BLOCKED` — операции магазина приостановлены.
+      parameters:
+        - $ref: '#/components/parameters/QrIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRefundRequest'
+            examples:
+              part:
+                summary: Возврат 300 ₽
+                value:
+                  amount: 30000
+      responses:
+        '201':
+          description: Возврат выполнен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Refund'
+        '200':
+          description: Повтор запроса с тем же ключом и суммой, возвращён ранее выполненный возврат
+          headers:
+            Idempotent-Replayed:
+              description: Всегда `true`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Refund'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /partner/v1/webhook:
+    put:
+      tags: [Уведомления]
+      operationId: setPartnerWebhook
+      x-release: '1.2'
+      summary: Задать адрес для уведомлений
+      description: |
+        Сохраняет адрес и секрет, на которые банк присылает уведомления `qr.paid` и `qr.refunded`. Прежние значения заменяются. Разрешены адреса `http` и `https`. Чтобы банк достучался до программы на вашем компьютере, используйте имя `host.docker.internal`, например `http://host.docker.internal:8080/webhook`. Адреса `localhost`, `127.0.0.0/8`, `::1` и `0.0.0.0` банк не принимает (422 `WEBHOOK_URL_LOOPBACK`): внутри банка они указывают на сам банк.
+
+        Секрет нужен для подписи: банк подписывает им тело каждого уведомления. Уведомления, отправленные до сохранения адреса, не отправляются.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookSettings'
+            examples:
+              local:
+                summary: Приёмник на компьютере
+                value:
+                  url: http://host.docker.internal:8080/webhook
+                  secret: my-shared-secret
+      responses:
+        '200':
+          description: Адрес сохранён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSaved'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /partner/v1/webhook/deliveries:
+    get:
+      tags: [Уведомления]
+      operationId: listPartnerWebhookDeliveries
+      x-release: '1.2'
+      summary: Журнал доставок уведомлений
+      description: |
+        Уведомления от новых к старым. У каждого — все попытки отправки: время по часам банка, код ответа приёмника или ошибка (`TIMEOUT`, `ECONNREFUSED`, `ENOTFOUND` и другие) и номер попытки.
+
+        Статусы доставки: `PENDING` — идут попытки, `DELIVERED` — приёмник ответил кодом 2xx, `FAILED` — все четыре попытки неудачны.
+      parameters:
+        - name: qrId
+          in: query
+          required: false
+          description: Только уведомления по этому QR-коду
+          schema:
+            type: string
+            format: uuid
+        - name: event
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/WebhookEvent'
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы, по умолчанию 20
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          description: Сколько записей пропустить, по умолчанию 0
+          schema:
+            type: integer
+            minimum: 0
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Страница журнала
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDeliveryPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+webhooks:
+  qr.paid:
+    post:
+      tags: [Уведомления]
+      summary: Покупатель оплатил QR-код
+      description: |
+        Банк отправляет уведомление на адрес из `PUT /partner/v1/webhook` сразу после зачисления оплаты на расчётный счёт магазина. Запрос — `POST` с телом `application/json`.
+
+        Заголовок `X-Signature` содержит `sha256=` и подпись тела: HMAC-SHA256 от точных байтов тела с секретом магазина, в шестнадцатеричном виде. Заголовок `X-Event-Id` — уникальный номер уведомления, при повторной отправке он тот же: по нему отличайте дубликаты.
+
+        Ответ 2xx считается доставкой. На любой другой ответ, ошибку соединения и молчание дольше 5 секунд банк повторяет отправку: через 10 секунд после первой неудачи, затем через 30 и через 60 секунд, всего четыре попытки. Перенаправления не выполняются.
+      parameters:
+        - name: X-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^sha256=[0-9a-f]{64}$'
+        - name: X-Event-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookBody'
+            examples:
+              paid:
+                value:
+                  event: qr.paid
+                  qrId: 7b0c5d12-3a4e-4f6a-9d21-5c8e1f0a2b34
+                  orderId: order-2026-0001
+                  amount: 123450
+                  refundedAmount: 0
+                  operationId: 0b8f6a52-6c0e-4a7e-8d4b-2f1d3c5e7a90
+                  occurredAt: '2026-10-20T12:03:11.420+03:00'
+      responses:
+        '200':
+          description: Уведомление принято
+  qr.refunded:
+    post:
+      tags: [Уведомления]
+      summary: Магазин вернул оплату покупателю
+      description: |
+        Отправляется после каждого возврата. `operationId` — операция возврата, `refundedAmount` — сколько возвращено по QR-коду всего, включая этот возврат. Заголовки, подпись и повторы — как у `qr.paid`.
+      parameters:
+        - name: X-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^sha256=[0-9a-f]{64}$'
+        - name: X-Event-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookBody'
+            examples:
+              refunded:
+                value:
+                  event: qr.refunded
+                  qrId: 7b0c5d12-3a4e-4f6a-9d21-5c8e1f0a2b34
+                  orderId: order-2026-0001
+                  amount: 123450
+                  refundedAmount: 30000
+                  operationId: 5e9a4c21-8d3b-4f10-b6a7-3c2d1e0f9a88
+                  occurredAt: '2026-10-20T12:10:45.100+03:00'
+      responses:
+        '200':
+          description: Уведомление принято
+components:
+  securitySchemes:
+    partnerKey:
+      type: apiKey
+      in: header
+      name: X-Partner-Key
+      description: Ключ магазина
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Сквозной номер запроса. Если не передан, банк назначит свой и вернёт его в заголовке ответа.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._:-]{8,64}$'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Уникальный ключ запроса, например UUID. Одинаковые ключи с одинаковым телом дают один возврат.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._:-]{8,128}$'
+    QrIdPath:
+      name: qrId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    BadRequest:
+      description: Запрос не прошёл проверку формата
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Ключ магазина не передан или неверен
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: Запрос корректен по формату, но выполнить его нельзя
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: QR-код не найден
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Состояние объекта не позволяет выполнить действие
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: Внутренняя ошибка банка
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Timestamp:
+      type: string
+      format: date-time
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+          description: Машиночитаемый код ошибки
+        message:
+          type: string
+        requestId:
+          type: string
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+    QrStatus:
+      type: string
+      enum: [CREATED, PAID, PARTIALLY_REFUNDED, REFUNDED, EXPIRED, CANCELLED]
+    CreateRefundRequest:
+      type: object
+      additionalProperties: false
+      required: [amount]
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Сумма возврата в копейках, не больше неразвёрнутого остатка оплаты
+    Refund:
+      type: object
+      additionalProperties: false
+      required: [refundId, qrId, orderId, operationId, operationNumber, amount, refundedAmount, qrStatus, createdAt]
+      properties:
+        refundId:
+          type: string
+          format: uuid
+        qrId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+        operationId:
+          type: string
+          format: uuid
+          description: Операция возврата
+        operationNumber:
+          type: string
+          description: Номер операции возврата для обращений
+        amount:
+          type: integer
+          description: Сумма этого возврата в копейках
+        refundedAmount:
+          type: integer
+          description: Сколько возвращено по QR-коду всего, в копейках
+        qrStatus:
+          $ref: '#/components/schemas/QrStatus'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    WebhookSettings:
+      type: object
+      additionalProperties: false
+      required: [url, secret]
+      properties:
+        url:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Адрес приёмника, `http` или `https`
+        secret:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Секрет для подписи тела уведомлений
+    WebhookSaved:
+      type: object
+      additionalProperties: false
+      required: [url, secretSet]
+      properties:
+        url:
+          type: string
+        secretSet:
+          type: boolean
+          description: Секрет задан. Сам секрет в ответах не возвращается
+    WebhookEvent:
+      type: string
+      enum: [qr.paid, qr.refunded]
+    WebhookBody:
+      type: object
+      additionalProperties: false
+      required: [event, qrId, orderId, amount, refundedAmount, operationId, occurredAt]
+      properties:
+        event:
+          $ref: '#/components/schemas/WebhookEvent'
+        qrId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+        amount:
+          type: integer
+          description: Сумма QR-кода в копейках
+        refundedAmount:
+          type: integer
+          description: Сколько возвращено по QR-коду всего, в копейках
+        operationId:
+          type: string
+          format: uuid
+          description: Операция оплаты для `qr.paid`, операция возврата для `qr.refunded`
+        occurredAt:
+          $ref: '#/components/schemas/Timestamp'
+    WebhookAttempt:
+      type: object
+      additionalProperties: false
+      required: [attempt, at, statusCode, error, durationMs]
+      properties:
+        attempt:
+          type: integer
+          minimum: 1
+          maximum: 4
+        at:
+          $ref: '#/components/schemas/Timestamp'
+        statusCode:
+          type: [integer, 'null']
+          description: Код ответа приёмника, `null` если ответа не было
+        error:
+          type: [string, 'null']
+          description: Причина, если ответа не было, например `TIMEOUT` или `ECONNREFUSED`
+        durationMs:
+          type: integer
+    WebhookDelivery:
+      type: object
+      additionalProperties: false
+      required: [eventId, event, qrId, orderId, operationId, url, status, attemptsMade, attempts, nextAttemptAt, createdAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: То же значение приходит в заголовке `X-Event-Id`
+        event:
+          $ref: '#/components/schemas/WebhookEvent'
+        qrId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+        operationId:
+          type: string
+          format: uuid
+        url:
+          type: string
+          description: Адрес, на который шла отправка
+        status:
+          type: string
+          enum: [PENDING, DELIVERED, FAILED]
+        attemptsMade:
+          type: integer
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookAttempt'
+        nextAttemptAt:
+          type: [string, 'null']
+          format: date-time
+          description: Когда будет следующая попытка, `null` если отправка закончена
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+    WebhookDeliveryPage:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookDelivery'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    CreateQrRequest:
+      type: object
+      additionalProperties: false
+      required: [orderId, amount, description]
+      properties:
+        orderId:
+          type: string
+          pattern: '^[A-Za-z0-9._:-]{1,64}$'
+          description: Номер заказа в системе магазина. Один заказ — один QR-код.
+        amount:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Сумма к оплате в копейках
+        description:
+          type: string
+          minLength: 1
+          maxLength: 140
+          description: Назначение платежа, его видит покупатель
+        ttlSeconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+          description: Срок действия QR-кода в секундах, по умолчанию 600
+    QrCode:
+      type: object
+      additionalProperties: false
+      required: [qrId, orderId, payload, status, amount, description, paidAmount, refundedAmount, operationId, operationNumber, paidAt, createdAt, expiresAt]
+      properties:
+        qrId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+        payload:
+          type: string
+          description: Содержимое QR-кода вида `zbqr://pay?id=<qrId>`
+        status:
+          $ref: '#/components/schemas/QrStatus'
+        amount:
+          type: integer
+          description: Сумма к оплате в копейках
+        description:
+          type: string
+        paidAmount:
+          type: integer
+          description: Сколько оплачено в копейках, у неоплаченного QR-кода 0
+        refundedAmount:
+          type: integer
+          description: Сколько возвращено покупателю в копейках
+        operationId:
+          type: [string, 'null']
+          format: uuid
+          description: Операция оплаты
+        operationNumber:
+          type: [string, 'null']
+          description: Номер операции оплаты для обращений
+        paidAt:
+          type: [string, 'null']
+          format: date-time
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        expiresAt:
+          $ref: '#/components/schemas/Timestamp'

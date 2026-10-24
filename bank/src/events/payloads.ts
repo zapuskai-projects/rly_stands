@@ -10,7 +10,7 @@ export interface PaymentCreatedPayload {
   operationId: string;
   operationNumber: string;
   clientNumber: string;
-  type: 'OWN_TRANSFER' | 'PHONE_TRANSFER';
+  type: 'OWN_TRANSFER' | 'PHONE_TRANSFER' | 'QR_PAYMENT' | 'QR_REFUND';
   route: 'INTERNAL' | 'SBP';
   amount: number;
   fee: number;
@@ -19,6 +19,7 @@ export interface PaymentCreatedPayload {
   recipientPhone: string | null;
   recipientBankCode: string | null;
   templateId?: string | null;
+  qrId?: string | null;
   createdAt: string;
 }
 

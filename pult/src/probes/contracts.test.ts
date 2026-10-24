@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { parseDocumentText } from './document';
 import { checkJsonSchemaSamples, describeJsonSchema } from './jsonschema';
-import { checkOpenApiSamples, describeOpenApi } from './openapi';
+import { checkOpenApiSamples, describeOpenApi, interpretBreaking } from './openapi';
+import { EXECUTORS } from './registry';
 
 const OPENAPI = `openapi: 3.0.3
 info:
@@ -145,6 +149,7 @@ describe('openapi.describe', () => {
         operationId: 'createDocument',
         parameters: [{ name: 'dryRun', in: 'query', required: false }],
         responses: ['201', '400'],
+        keyHeaders: [],
         requestBody: undefined,
         responseBodies: undefined,
       },
@@ -180,6 +185,48 @@ describe('openapi.describe', () => {
         ['500', null],
       ],
     );
+  });
+
+  it('вход по ключу в заголовке и уведомления магазину: webhooks и callbacks с заголовками', () => {
+    const contract = (scheme: string, security: string) => `openapi: 3.1.0
+info: { title: Партнёрское API, version: 1.0.0 }
+${security}paths:
+  /partner/v1/qr:
+    post:
+      responses: { '201': { description: ok } }
+      callbacks:
+        paid:
+          '{$request.body#/url}':
+            post:
+              parameters:
+                - { name: X-Event-Id, in: header, schema: { type: string } }
+              responses: { '200': { description: ok } }
+  /partner/v1/webhook:
+    put:
+      security: []
+      responses: { '200': { description: ok } }
+webhooks:
+  qr.paid:
+    post:
+      parameters:
+        - { name: X-Signature, in: header, required: true, schema: { type: string } }
+      responses: { '200': { description: ok } }
+components:
+  securitySchemes:
+    partnerKey: ${scheme}
+`;
+    const header = describeOpenApi(parseDocumentText(contract('{ type: apiKey, in: header, name: X-Partner-Key }', 'security: [{ partnerKey: [] }]\n')));
+    assert.deepEqual(header.securitySchemes, [{ name: 'partnerKey', type: 'apiKey', in: 'header', paramName: 'X-Partner-Key' }]);
+    assert.deepEqual((header.methods as Array<{ keyHeaders: string[] }>).map((method) => method.keyHeaders), [['X-Partner-Key'], []]);
+    assert.deepEqual(header.methodsWithoutHeaderKey, ['PUT /partner/v1/webhook']);
+    assert.deepEqual(header.notifications, [
+      { name: 'qr.paid', source: 'webhooks', headers: ['X-Signature'] },
+      { name: 'paid', source: 'callbacks', headers: ['X-Event-Id'] },
+    ]);
+    const inQuery = describeOpenApi(parseDocumentText(contract('{ type: apiKey, in: query, name: key }', 'security: [{ partnerKey: [] }]\n')));
+    assert.deepEqual(inQuery.methodsWithoutHeaderKey, ['POST /partner/v1/qr', 'PUT /partner/v1/webhook']);
+    const none = describeOpenApi(parseDocumentText(contract('{ type: apiKey, in: header, name: X-Partner-Key }', '')));
+    assert.deepEqual(none.methodsWithoutHeaderKey, ['POST /partner/v1/qr', 'PUT /partner/v1/webhook']);
   });
 
   it('метод без тела запроса отдаёт requestBody=null', () => {
@@ -302,5 +349,35 @@ describe('jsonschema', () => {
   it('нечитаемая схема не засчитывает примеры', () => {
     const result = checkJsonSchemaSamples(parseDocumentText('{"type": 5}'), [{ data: 1, expectValid: true }]);
     assert.equal(result.allOk, false);
+  });
+});
+
+describe('openapi.breaking без файлов', () => {
+  it('нет одного из файлов: ломающих нет, а причина названа в error', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kit-breaking-'));
+    try {
+      const facts = (await EXECUTORS['openapi.breaking']!({ file: 'v2.yaml', baseFile: 'v1.yaml' }, { workDir: dir, label: 'k7f3qa' })) as Record<string, unknown>;
+      assert.equal(facts.count, 0);
+      assert.match(String(facts.error), /v2\.yaml/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('openapi.breaking: разбор вывода oasdiff', () => {
+  it('сбой инструмента — причина в error, а не «ломающих нет»', () => {
+    const failed = interpretBreaking({ code: 1, stdout: '', stderr: 'Error: failed to load spec: yaml: line 3\nsecond line' });
+    assert.deepEqual([failed.count, failed.error], [0, 'Error: failed to load spec: yaml: line 3']);
+    const garbage = interpretBreaking({ code: 0, stdout: 'No breaking changes', stderr: '' });
+    assert.match(String(garbage.error), /не разобрать/);
+    assert.throws(() => interpretBreaking({ code: 127, stdout: '', stderr: 'oasdiff: not found' }), /нет oasdiff/);
+  });
+
+  it('список изменений разобран, пустой вывод и пустой список — без ошибки', () => {
+    const found = interpretBreaking({ code: 0, stdout: '[{"id":"request-property-added-required","text":"добавлено поле","level":3}]', stderr: '' });
+    assert.deepEqual([found.count, found.error, found.breaking[0]?.id], [1, null, 'request-property-added-required']);
+    assert.deepEqual(interpretBreaking({ code: 0, stdout: '', stderr: '' }), { count: 0, breaking: [], error: null });
+    assert.equal(interpretBreaking({ code: 0, stdout: '[]', stderr: '' }).error, null);
   });
 });

@@ -20,6 +20,8 @@ services:
       SBP_URL: http://bank-sbp:18402
       SBP_TIMEOUT_MS: "10000"
       KIT_SECRET: ${KIT_SECRET:-dev-kit-secret}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:18400:18400"
     restart: unless-stopped

@@ -61,6 +61,7 @@ describe('факты диаграмм', () => {
     assert.match(facts.participantsText, /Планировщик автоплатежей sched/);
     assert.match(facts.messages[0]?.fromText ?? '', /Планировщик/);
     assert.equal(facts.targetsText, 'Сервис переводов pay\nKafka\nПланировщик автоплатежей sched');
+    assert.equal(facts.flowText.split('\n')[1], 'Сервис переводов pay: событие исполнено → Kafka');
     const alt = facts.blocks[0];
     assert.equal(alt?.hasElse, true);
     assert.match(alt?.text ?? '', /не хватает денег/);

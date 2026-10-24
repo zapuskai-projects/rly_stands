@@ -5,7 +5,7 @@ import { enqueueOutbox } from '../events/outbox.repository';
 import { BANK } from '../shared/bank-identity';
 import { canTransition, LIMIT_COUNTED_STATUSES, type OperationStatus } from './status';
 
-export type OperationType = 'OWN_TRANSFER' | 'PHONE_TRANSFER';
+export type OperationType = 'OWN_TRANSFER' | 'PHONE_TRANSFER' | 'QR_PAYMENT' | 'QR_REFUND';
 export type OperationRoute = 'INTERNAL' | 'SBP';
 
 export interface OperationRecord {
@@ -30,6 +30,7 @@ export interface OperationRecord {
   rejectMessage: string | null;
   requestId: string | null;
   templateId: string | null;
+  qrId: string | null;
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
@@ -64,6 +65,7 @@ interface OperationRow {
   reject_message: string | null;
   request_id: string | null;
   template_id: string | null;
+  qr_id: string | null;
   created_at: Date;
   updated_at: Date;
   completed_at: Date | null;
@@ -73,7 +75,7 @@ const SELECT_VIEW = `
   SELECT o.id, o.number, o.client_id, o.type, o.route, o.status, o.from_account_id, fa.number AS from_account_number,
          o.to_account_id, ta.number AS to_account_number, o.recipient_phone, o.recipient_bank_code,
          pb.name AS recipient_bank_name, o.recipient_name, o.amount_kop, o.fee_kop, o.comment,
-         o.reject_code, o.reject_message, o.request_id, o.template_id, o.created_at, o.updated_at, o.completed_at
+         o.reject_code, o.reject_message, o.request_id, o.template_id, o.qr_id, o.created_at, o.updated_at, o.completed_at
   FROM operations o
   JOIN accounts fa ON fa.id = o.from_account_id
   LEFT JOIN accounts ta ON ta.id = o.to_account_id
@@ -102,6 +104,7 @@ function mapOperation(row: OperationRow): OperationRecord {
     rejectMessage: row.reject_message,
     requestId: row.request_id,
     templateId: row.template_id,
+    qrId: row.qr_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
@@ -123,14 +126,15 @@ export interface NewOperation {
   attemptLabel: string | null;
   requestId: string;
   templateId?: string | null;
+  qrId?: string | null;
   createdAt: Date;
 }
 
 export async function insertOperation(db: Db, input: NewOperation): Promise<{ id: string; number: string }> {
   const result = await db.query<{ id: string; number: string }>(
     `INSERT INTO operations (client_id, type, route, status, from_account_id, to_account_id, recipient_phone,
-       recipient_bank_code, recipient_name, amount_kop, fee_kop, comment, attempt_label, request_id, created_at, updated_at, template_id)
-     VALUES ($1, $2, $3, 'CREATED', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $15)
+       recipient_bank_code, recipient_name, amount_kop, fee_kop, comment, attempt_label, request_id, created_at, updated_at, template_id, qr_id)
+     VALUES ($1, $2, $3, 'CREATED', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $15, $16)
      RETURNING id, number`,
     [
       input.clientId,
@@ -148,6 +152,7 @@ export async function insertOperation(db: Db, input: NewOperation): Promise<{ id
       input.requestId,
       input.createdAt,
       input.templateId ?? null,
+      input.qrId ?? null,
     ],
   );
   const created = result.rows[0] as { id: string; number: string };
@@ -225,8 +230,17 @@ export async function clearOperationFee(db: Db, operationId: string): Promise<vo
   await db.query('UPDATE operations SET fee_kop = 0 WHERE id = $1', [operationId]);
 }
 
-export async function findClientOperation(db: Db, clientId: string, operationId: string): Promise<OperationRecord | null> {
-  const result = await db.query<OperationRow>(`${SELECT_VIEW} WHERE o.client_id = $1 AND o.id = $2`, [clientId, operationId]);
+export async function findClientOperation(
+  db: Db,
+  clientId: string,
+  operationId: string,
+  excludeTypes: readonly OperationType[] = [],
+): Promise<OperationRecord | null> {
+  const result = await db.query<OperationRow>(`${SELECT_VIEW} WHERE o.client_id = $1 AND o.id = $2 AND o.type <> ALL($3::text[])`, [
+    clientId,
+    operationId,
+    [...excludeTypes],
+  ]);
   const row = result.rows[0];
   return row ? mapOperation(row) : null;
 }
@@ -234,6 +248,7 @@ export async function findClientOperation(db: Db, clientId: string, operationId:
 export interface OperationFilter {
   status?: OperationStatus;
   type?: OperationType;
+  excludeTypes?: readonly OperationType[];
   createdFrom?: Date;
   createdBefore?: Date;
   number?: string;
@@ -254,6 +269,7 @@ export async function listClientOperations(
   };
   if (filter.status) add('o.status = ?', filter.status);
   if (filter.type) add('o.type = ?', filter.type);
+  if (filter.excludeTypes?.length) add('o.type <> ALL(?::text[])', [...filter.excludeTypes]);
   if (filter.createdFrom) add('o.created_at >= ?', filter.createdFrom);
   if (filter.createdBefore) add('o.created_at < ?', filter.createdBefore);
   if (filter.number) add('o.number = ?', filter.number);
@@ -363,13 +379,18 @@ export async function hasSuccessfulTransferTo(
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function loadUsualAmounts(db: Db, clientId: string, before: BeforeMark | null = null): Promise<{ count: number; total: Kopecks }> {
+export async function loadUsualAmounts(
+  db: Db,
+  clientId: string,
+  before: BeforeMark | null = null,
+  type: OperationType = 'PHONE_TRANSFER',
+): Promise<{ count: number; total: Kopecks }> {
   const result = await db.query<{ count: number; total: bigint }>(
     `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount_kop), 0)::bigint AS total FROM (
        SELECT o.amount_kop FROM operations o
-       WHERE ${BEFORE_CLAUSE} AND o.client_id = $1 AND o.type = 'PHONE_TRANSFER' AND o.status = ANY($4::text[])
+       WHERE ${BEFORE_CLAUSE} AND o.client_id = $1 AND o.type = $6 AND o.status = ANY($4::text[])
        ORDER BY o.created_at DESC, o.number DESC LIMIT $5) recent`,
-    [clientId, before?.createdAt ?? null, before?.number ?? null, SUCCESSFUL_STATUSES, USUAL_AMOUNT_SAMPLE],
+    [clientId, before?.createdAt ?? null, before?.number ?? null, SUCCESSFUL_STATUSES, USUAL_AMOUNT_SAMPLE, type],
   );
   return result.rows[0] as { count: number; total: Kopecks };
 }

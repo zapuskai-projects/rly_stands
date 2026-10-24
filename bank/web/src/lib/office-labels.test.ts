@@ -8,6 +8,7 @@ describe('подписи офиса', () => {
     assert.equal(recipientLabel({ type: 'PHONE_TRANSFER', recipient: { phone: '+79000000017', bankCode: 'NORTHWIND', bankName: 'Банк «Северный ветер»', displayName: 'Мария П.' } }), 'Мария П., Банк «Северный ветер»');
     assert.equal(recipientLabel({ type: 'PHONE_TRANSFER', recipient: { phone: '+79005550000', bankCode: 'KEDR', bankName: 'Банк «Кедр»', displayName: null } }), '+7 900 555-00-00, Банк «Кедр»');
     assert.equal(recipientLabel({ type: 'OWN_TRANSFER', recipient: { phone: null, bankCode: null, bankName: null, displayName: null } }), 'Свои счета клиента');
+    assert.equal(recipientLabel({ type: 'QR_PAYMENT', recipient: { phone: null, bankCode: null, bankName: null, displayName: 'Лавка Гарипова' } }), 'Лавка Гарипова');
   });
 
   it('строка очереди называет оценку и сработавшие правила коротко', () => {
@@ -20,6 +21,7 @@ describe('подписи офиса', () => {
     assert.equal(channelLabel({ type: 'PHONE_TRANSFER', route: 'SBP' }), 'по номеру телефона через СБП');
     assert.equal(channelLabel({ type: 'PHONE_TRANSFER', route: 'INTERNAL' }), 'по номеру телефона');
     assert.equal(channelLabel({ type: 'OWN_TRANSFER', route: 'INTERNAL' }), 'между своими счетами');
+    assert.equal(channelLabel({ type: 'QR_PAYMENT', route: 'INTERNAL' }), 'оплата по QR');
   });
 
   it('виды уведомлений об автоплатежах появляются только с релиза 1.1', () => {

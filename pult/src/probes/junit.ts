@@ -130,6 +130,7 @@ export function junitFacts(files: string[], cases: JunitCase[], parseErrors: str
     allPassed: cases.length > 0 && failures + errored === 0,
     skipped: count('skipped'),
     cases: cases.slice(0, MAX_CASES).map(({ name, classname, status, message }) => ({ name, classname, status, message })),
+    passedNamesText: cases.filter((item) => item.status === 'passed').map((item) => item.name).join('\n'),
     failedNames: [...new Set(broken.flatMap((item) => [item.name, item.classname ? `${item.classname}.${item.name}` : item.name]))],
     groups,
     largestGroup: largest,

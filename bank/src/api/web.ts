@@ -3,7 +3,7 @@ import path from 'node:path';
 import express, { type Express, type Request, type Response } from 'express';
 import { logger } from '../shared/logger';
 
-const SERVER_PATHS = /^\/(api|health|docs-content|sbp|assets|_kit)(\/|$)/;
+const SERVER_PATHS = /^\/(api|partner|health|docs-content|sbp|assets|_kit)(\/|$)/;
 
 export function mountWeb(app: Express, directory: string): void {
   const index = path.join(directory, 'index.html');

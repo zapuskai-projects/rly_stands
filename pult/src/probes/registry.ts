@@ -19,6 +19,7 @@ import { PLATFORM_EXECUTORS } from './platform';
 import { POSTGRES_EXECUTORS } from './postgres';
 import { RABBITMQ_EXECUTORS } from './rabbitmq';
 import type { ExecutorTable } from './types';
+import { WEBHOOK_RECEIVER_EXECUTORS } from './webhook-receiver';
 import { XML_EXECUTORS } from './xml';
 
 export const EXECUTORS: ExecutorTable = {
@@ -41,6 +42,7 @@ export const EXECUTORS: ExecutorTable = {
   ...BANK_EXECUTORS,
   ...BANK_RUN_EXECUTORS,
   ...BANK_HTTP_EXECUTORS,
+  ...WEBHOOK_RECEIVER_EXECUTORS,
   ...KIT_EXECUTORS,
   ...PLATFORM_EXECUTORS,
 };

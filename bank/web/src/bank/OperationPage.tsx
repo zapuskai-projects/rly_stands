@@ -33,6 +33,13 @@ function StatusIcon({ operation }: { operation: Operation }) {
   );
 }
 
+function recipientLine(operation: Operation): string {
+  if (operation.type === 'OWN_TRANSFER') return 'Между своими счетами';
+  if (operation.type === 'QR_PAYMENT') return `${operation.recipient.displayName ?? 'Магазин'} · оплата по QR`;
+  if (operation.type === 'QR_REFUND') return `${operation.recipient.displayName ?? 'Покупатель'} · возврат по QR`;
+  return `${operation.recipient.displayName ?? (operation.recipient.phone ? formatPhone(operation.recipient.phone) : 'Получатель')} · ${operation.recipient.bankName ?? ''}`;
+}
+
 function Timeline({ operation }: { operation: Operation }) {
   return (
     <section aria-label="Ход операции" className="card timeline" data-testid="timeline">
@@ -87,9 +94,7 @@ export function OperationPage() {
                 −{formatMoney(operation.amount)}
               </div>
               <div style={{ fontWeight: 600 }} data-testid="operation-recipient">
-                {operation.type === 'OWN_TRANSFER'
-                  ? 'Между своими счетами'
-                  : `${operation.recipient.displayName ?? (operation.recipient.phone ? formatPhone(operation.recipient.phone) : 'Получатель')} · ${operation.recipient.bankName ?? ''}`}
+                {recipientLine(operation)}
               </div>
               <StatusPill status={operation.status} />
               <p className="muted" style={{ fontSize: 14 }} data-testid="operation-hint">
@@ -112,6 +117,12 @@ export function OperationPage() {
                 <dt>Откуда</dt>
                 <dd className="mono">{formatAccountNumber(operation.fromAccount.number)}</dd>
               </div>
+              {operation.type === 'QR_PAYMENT' || operation.type === 'QR_REFUND' ? (
+                <div>
+                  <dt>{operation.type === 'QR_PAYMENT' ? 'Магазин' : 'Покупатель'}</dt>
+                  <dd data-testid="operation-merchant">{operation.recipient.displayName}</dd>
+                </div>
+              ) : null}
               {operation.recipient.phone ? (
                 <div>
                   <dt>Телефон</dt>
@@ -155,7 +166,7 @@ export function OperationPage() {
                 Чек
               </button>
             </div>
-            {operation.status === 'COMPLETED' && releaseAtLeast(release, '1.1') ? <SaveAsTemplate operation={operation} onSaved={setToast} /> : null}
+            {operation.status === 'COMPLETED' && operation.type !== 'QR_PAYMENT' && operation.type !== 'QR_REFUND' && releaseAtLeast(release, '1.1') ? <SaveAsTemplate operation={operation} onSaved={setToast} /> : null}
             {isActive(operation.status) ? (
               <Pill tone="info">
                 <span data-testid="operation-polling">Статус обновляется сам</span>

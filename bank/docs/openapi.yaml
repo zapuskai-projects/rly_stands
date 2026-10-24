@@ -28,6 +28,8 @@ tags:
     x-release: '1.1'
   - name: Автоплатежи
     x-release: '1.1'
+  - name: Оплата по QR
+    x-release: '1.2'
   - name: Учебный контур
 paths:
   /api/v1/auth/login:
@@ -733,6 +735,104 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/qr-payments/lookup:
+    get:
+      tags: [Оплата по QR]
+      operationId: lookupQrPayment
+      x-release: '1.2'
+      summary: Покупка по содержимому QR-кода
+      description: Магазин, сумма, назначение и состояние QR-кода. Запрос ничего не списывает, по нему интернет-банк показывает карточку покупки перед оплатой.
+      parameters:
+        - name: payload
+          in: query
+          required: true
+          description: Содержимое QR-кода вида `zbqr://pay?id=<идентификатор>`
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Покупка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QrPurchase'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/qr-payments:
+    post:
+      tags: [Оплата по QR]
+      operationId: createQrPayment
+      x-release: '1.2'
+      summary: Оплатить покупку по QR-коду
+      description: |
+        Создаёт операцию вида `QR_PAYMENT`: со счёта клиента на расчётный счёт магазина. Клиенту оплата бесплатна, комиссию платит магазин.
+
+        Оплата не входит в суточный лимит переводов по телефону. Как и перевод по телефону, она проходит проверку антифродом (правило нового получателя не применяется) и при необходимости ручную проверку, а затем получает статус `COMPLETED`. До проведения средства удерживаются на счёте.
+
+        Отказы: `QR_NOT_FOUND` — такого QR-кода нет, `QR_EXPIRED` — срок действия истёк, `QR_CANCELLED` — магазин отменил QR-код, `QR_ALREADY_PAID` — QR-код уже оплачен или его оплата уже выполняется. Ошибки данных (нет счёта, не хватает средств, магазин не принимает платежи — `RECIPIENT_NOT_FOUND`) возвращаются ответом 422 без операции. Арест счёта создаёт операцию со статусом `REJECTED`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QrPaymentRequest'
+            examples:
+              pay:
+                summary: Оплата с основного счёта
+                value:
+                  payload: 'zbqr://pay?id=7b0c5d12-3a4e-4f6a-9d21-5c8e1f0a2b34'
+                  accountId: 0b8f6a52-6c0e-4a7e-8d4b-2f1d3c5e7a90
+      responses:
+        '201':
+          description: Операция создана
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        '200':
+          description: Повтор запроса с тем же ключом и телом, возвращена ранее созданная операция
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotent-Replayed:
+              description: Всегда `true`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
         '500':
           $ref: '#/components/responses/ServerError'
   /api/v1/banks:
@@ -1838,7 +1938,10 @@ components:
             $ref: '#/components/schemas/StatementEntry'
     OperationType:
       type: string
-      enum: [OWN_TRANSFER, PHONE_TRANSFER]
+      enum: [OWN_TRANSFER, PHONE_TRANSFER, QR_PAYMENT, QR_REFUND]
+      x-release-values:
+        QR_PAYMENT: '1.2'
+        QR_REFUND: '1.2'
     OperationStatus:
       type: string
       enum: [CREATED, CHECKING, ON_REVIEW, PROCESSING, COMPLETED, REJECTED, FAILED, REFUNDED]
@@ -1985,6 +2088,11 @@ components:
           format: uuid
           x-release: '1.1'
           description: Шаблон, по которому создана операция, `null` у обычных переводов
+        qrId:
+          type: [string, 'null']
+          format: uuid
+          x-release: '1.2'
+          description: QR-код, по которому создана операция, `null` у переводов
         rejection:
           anyOf:
             - $ref: '#/components/schemas/Rejection'
@@ -2552,6 +2660,43 @@ components:
       type: string
       pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
       description: Дата без времени, московская, вида 2026-12-31
+    QrStatus:
+      type: string
+      enum: [CREATED, PAID, PARTIALLY_REFUNDED, REFUNDED, EXPIRED, CANCELLED]
+    QrPaymentRequest:
+      type: object
+      additionalProperties: false
+      required: [payload, accountId]
+      properties:
+        payload:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Содержимое QR-кода вида `zbqr://pay?id=<идентификатор>`
+        accountId:
+          type: string
+          format: uuid
+          description: Счёт списания из списка счетов клиента
+    QrPurchase:
+      type: object
+      additionalProperties: false
+      required: [qrId, merchant, amount, description, status, expiresAt]
+      properties:
+        qrId:
+          type: string
+          format: uuid
+        merchant:
+          type: string
+          description: Название магазина
+        amount:
+          $ref: '#/components/schemas/Money'
+        description:
+          type: string
+          description: Назначение платежа
+        status:
+          $ref: '#/components/schemas/QrStatus'
+        expiresAt:
+          $ref: '#/components/schemas/Timestamp'
     Template:
       type: object
       additionalProperties: false

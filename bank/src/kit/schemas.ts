@@ -117,6 +117,8 @@ const operationsQuery = z
   })
   .strict();
 
+const qrQuery = z.object({ label: label.optional(), qrId: z.uuid().optional(), orderId: z.string().min(1).max(64).optional() }).strict();
+const deliveriesQuery = z.object({ label: label.optional(), qrId: z.uuid().optional(), event: z.enum(['qr.paid', 'qr.refunded']).optional() }).strict();
 const requestsQuery = z.object({ label }).strict();
 const ledgerQuery = z.object({ account: z.string().regex(/^[0-9]{20}$/, 'номер счёта из 20 цифр').optional() }).strict();
 
@@ -147,6 +149,8 @@ export const kitSchemas = {
   autopayRunAction,
   autopaymentsQuery,
   operationsQuery,
+  qrQuery,
+  deliveriesQuery,
   requestsQuery,
   ledgerQuery,
 };

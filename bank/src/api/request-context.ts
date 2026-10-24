@@ -8,8 +8,12 @@ import { PendingWrites } from './journal-pending';
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{8,64}$/;
 const ATTEMPT_LABEL_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
-const API_PREFIX = '/api/v1';
+const JOURNALED_PREFIXES = ['/api/v1', '/partner/v1'];
 const KIT_ACTIONS_PREFIX = '/_kit/actions/';
+
+function isJournaled(url: string): boolean {
+  return JOURNALED_PREFIXES.some((prefix) => url.startsWith(prefix));
+}
 
 function headerValue(req: Request, name: string): string | null {
   const value = req.headers[name];
@@ -32,7 +36,7 @@ export function requestContext(clock: BankClock, pool: Pool): RequestHandler {
     res.locals.attemptLabel = headerLabel;
     res.setHeader('X-Request-Id', requestId);
     res.setHeader('X-Bank-Time', toMoscowIso(clock.now()));
-    if (headerLabel || !req.originalUrl.startsWith(API_PREFIX)) {
+    if (headerLabel || !isJournaled(req.originalUrl)) {
       next();
       return;
     }
@@ -63,7 +67,7 @@ export function createRequestJournal(pool: Pool, clock: BankClock): RequestJourn
   const pending = new PendingWrites();
   const middleware: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
     const isKitAction = req.originalUrl.startsWith(KIT_ACTIONS_PREFIX);
-    if (!req.originalUrl.startsWith(API_PREFIX) && !isKitAction) {
+    if (!isJournaled(req.originalUrl) && !isKitAction) {
       next();
       return;
     }

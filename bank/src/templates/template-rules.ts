@@ -1,4 +1,5 @@
 import type { Kopecks } from '../accounts/money';
+import type { OperationType } from '../payments/operations.repository';
 import type { TransferCommand } from '../payments/transfer-command';
 import { BANK } from '../shared/bank-identity';
 
@@ -36,7 +37,7 @@ export function templateNameIssue(name: string): string | null {
   return null;
 }
 
-export function kindOfOperation(operation: { type: 'OWN_TRANSFER' | 'PHONE_TRANSFER'; route: 'INTERNAL' | 'SBP' }): TemplateKind {
+export function kindOfOperation(operation: { type: OperationType; route: 'INTERNAL' | 'SBP' }): TemplateKind {
   if (operation.type === 'OWN_TRANSFER') return 'OWN';
   return operation.route === 'SBP' ? 'SBP' : 'PHONE';
 }
