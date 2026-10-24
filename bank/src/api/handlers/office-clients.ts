@@ -1,14 +1,17 @@
 import type { Pool } from 'pg';
 import { listClientAccounts, sumActiveHolds } from '../../accounts/accounts.repository';
 import { fromApiAmount, toApiAmount } from '../../accounts/money';
+import { listAutopaymentRuns, listClientAutopayments } from '../../autopayments/autopayments.repository';
 import type { BankClock } from '../../clock/bank-clock';
 import { findClientById, findDailyLimitOverride } from '../../clients/clients.repository';
 import { findOfficeClient, listOfficeClients, setDailyLimitOverride } from '../../office/clients.repository';
 import { listClientRecentOperations } from '../../office/operations.repository';
 import { forbidden, notFound } from '../../shared/errors';
 import { getTariff } from '../../tariffs/tariffs.repository';
+import { listClientTemplates } from '../../templates/templates.repository';
 import { profileDto, tariffDto } from '../dto';
 import { officeClientDto, officeOperationRowDto } from '../dto-office';
+import { autopaymentDto, runDto, templateDto } from '../dto-templates';
 import { buildClientLimits } from '../limits';
 import type { Handler, HandlerContext } from '../router';
 
@@ -20,6 +23,12 @@ interface Deps {
 const DEFAULT_PAGE_SIZE = 20;
 const RECENT_OPERATIONS = 10;
 const clientIdOf = (ctx: HandlerContext): string => String(ctx.params.clientId);
+
+async function existingClientId(pool: Pool, ctx: HandlerContext): Promise<string> {
+  const clientId = clientIdOf(ctx);
+  if (!(await findOfficeClient(pool, clientId))) throw notFound('CLIENT_NOT_FOUND', 'Клиент не найден');
+  return clientId;
+}
 
 async function clientDetails(pool: Pool, clock: BankClock, clientId: string) {
   const row = await findOfficeClient(pool, clientId);
@@ -63,6 +72,21 @@ export function officeClientHandlers({ pool, clock }: Deps): Record<string, Hand
       return { status: 200, body: { items: rows.map(officeClientDto), total, limit, offset } };
     },
     getOfficeClient: async (ctx) => ({ status: 200, body: await clientDetails(pool, clock, clientIdOf(ctx)) }),
+    listOfficeClientTemplates: async (ctx) => {
+      const clientId = await existingClientId(pool, ctx);
+      return { status: 200, body: { items: (await listClientTemplates(pool, clientId)).map(templateDto) } };
+    },
+    listOfficeClientAutopayments: async (ctx) => {
+      const clientId = await existingClientId(pool, ctx);
+      const autopayments = await listClientAutopayments(pool, clientId);
+      const items = await Promise.all(
+        autopayments.map(async (autopayment) => ({
+          autopayment: autopaymentDto(autopayment),
+          runs: (await listAutopaymentRuns(pool, autopayment.id)).map(runDto),
+        })),
+      );
+      return { status: 200, body: { items } };
+    },
     setClientDailyLimit: async (ctx) => {
       if (ctx.operator?.role !== 'SENIOR') throw forbidden('FORBIDDEN_ROLE', 'Личные лимиты клиентов меняет старший оператор');
       const clientId = clientIdOf(ctx);

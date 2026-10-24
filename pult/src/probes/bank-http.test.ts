@@ -14,6 +14,8 @@ type Call = {
 let server: Server;
 let calls: Call[] = [];
 let smsText = 'Код входа в ЗапускБанк: 482913';
+let smsBefore: string[] = [];
+let smsAfter: string[] = [];
 
 function readBody(request: IncomingMessage): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
@@ -33,7 +35,7 @@ before(async () => {
       response.end(JSON.stringify(payload));
     };
     if (url === '/api/v1/auth/login') return send(200, { challengeId: 'ch-1', expiresInSec: 300 });
-    if (url.startsWith('/api/v1/sandbox/sms')) return send(200, { items: [{ text: smsText }] });
+    if (url.startsWith('/api/v1/sandbox/sms')) return send(200, { items: [...smsBefore, smsText, ...smsAfter].map((text) => ({ text })) });
     if (url === '/api/v1/auth/verify') {
       return body?.code === '482913' ? send(200, { accessToken: 'token-1' }) : send(401, { code: 'INVALID_CODE' });
     }
@@ -58,6 +60,8 @@ after(() => {
 beforeEach(() => {
   calls = [];
   smsText = 'Код входа в ЗапускБанк: 482913';
+  smsBefore = [];
+  smsAfter = [];
 });
 
 const http = (params: Record<string, unknown>) =>
@@ -92,18 +96,28 @@ describe('bank.http', () => {
     assert.equal(request?.headers['x-attempt-label'], 'k7f3qa');
     assert.equal(request?.headers['idempotency-key'], 'key-1');
     assert.equal(request?.body?.amount, 100);
-    assert.deepEqual(facts, { status: 201, code: '', operationId: 'op-1', number: 'ZB0001', replayed: false });
+    assert.deepEqual(facts, { status: 201, code: '', id: 'op-1', operationId: 'op-1', number: 'ZB0001', replayed: false });
   });
 
   it('ответ 4xx — это результат для эталона, а не сбой: код ответа и код ошибки доступны', async () => {
     assert.deepEqual(await post({ body: { recipientPhone: 'bad' } }), {
       status: 400,
       code: 'VALIDATION_ERROR',
+      id: '',
       operationId: '',
       number: '',
       replayed: false,
     });
     assert.equal((await post({ body: { amount: 5000 } })).code, 'INSUFFICIENT_FUNDS');
+  });
+
+  it('изменение шаблона методом PATCH уходит как PATCH, идентификатор созданного объекта доступен как id', async () => {
+    const facts = await http({ asPhone: '+79001110001', method: 'PATCH', path: '/api/v1/templates/tpl-1', body: { name: 'Новое' } });
+    assert.equal(calls.at(-1)?.method, 'PATCH');
+    assert.deepEqual(calls.at(-1)?.body, { name: 'Новое' });
+    assert.equal(facts.status, 200);
+    const created = await post();
+    assert.equal(created.id, 'op-1');
   });
 
   it('повтор с тем же ключом помечается replayed', async () => {
@@ -115,6 +129,14 @@ describe('bank.http', () => {
   it('метка попытки главнее заголовка из параметров: подменить её нельзя', async () => {
     await post({}, { 'X-Attempt-Label': 'other1' });
     assert.equal(calls.at(-1)?.headers['x-attempt-label'], 'k7f3qa');
+  });
+
+  it('новее кода входа может лежать СМС о переводе без кода: берётся ближайшее СМС с кодом', async () => {
+    smsBefore = ['Перевод на 1 000 ₽ выполнен', 'Автоплатёж 130000 ₽ исполнен'];
+    smsAfter = ['ЗапускБанк: код входа 111111. Никому его не сообщайте.'];
+    const facts = await post();
+    assert.equal(facts.status, 201);
+    assert.ok(calls.some((call) => call.url.startsWith('/api/v1/sandbox/sms') && call.url.includes('limit=5')));
   });
 
   it('без кода в СМС вход не удаётся: сбой, а не 4xx', async () => {

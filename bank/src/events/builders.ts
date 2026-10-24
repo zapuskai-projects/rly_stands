@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { toApiAmount, type Kopecks } from '../accounts/money';
 import { toMoscowIso } from '../clock/moscow';
-import type { NotificationMessage, PaymentCreatedPayload, StatusChangedPayload } from './payloads';
+import type { AutopaymentExecutedPayload, NotificationMessage, PaymentCreatedPayload, StatusChangedPayload } from './payloads';
 import type { OutboxMessage } from './outbox.repository';
 import { getTopics, NOTIFICATION_ROUTING_KEY } from './topics';
 
@@ -25,6 +25,7 @@ export interface CreatedEventInput {
   createdAt: Date;
   requestId: string;
   amountInRubles?: boolean;
+  templateId?: string | null;
 }
 
 export function paymentCreatedMessage(input: CreatedEventInput): OutboxMessage {
@@ -41,6 +42,7 @@ export function paymentCreatedMessage(input: CreatedEventInput): OutboxMessage {
     fromAccount: input.fromAccount,
     recipientPhone: input.recipientPhone,
     recipientBankCode: input.recipientBankCode,
+    ...(input.templateId === undefined ? {} : { templateId: input.templateId }),
     createdAt: toMoscowIso(input.createdAt),
   };
   return {
@@ -85,8 +87,51 @@ export function statusChangedMessage(input: StatusEventInput): OutboxMessage {
   };
 }
 
+export interface AutopaymentEventInput {
+  autopaymentId: string;
+  runId: string;
+  clientNumber: string;
+  runDate: string;
+  cycleDate: string;
+  attempt: number;
+  outcome: AutopaymentExecutedPayload['outcome'];
+  operationId: string | null;
+  operationNumber: string | null;
+  reasonCode: string | null;
+  amount: Kopecks;
+  finishedAt: Date;
+  requestId: string;
+}
+
+export function autopaymentExecutedMessage(input: AutopaymentEventInput): OutboxMessage {
+  const payload: AutopaymentExecutedPayload = {
+    eventId: randomUUID(),
+    autopaymentId: input.autopaymentId,
+    runId: input.runId,
+    clientNumber: input.clientNumber,
+    runDate: input.runDate,
+    cycleDate: input.cycleDate,
+    attempt: input.attempt,
+    outcome: input.outcome,
+    operationId: input.operationId,
+    operationNumber: input.operationNumber,
+    reasonCode: input.reasonCode,
+    amount: toApiAmount(input.amount),
+    currency: 'RUB',
+    finishedAt: toMoscowIso(input.finishedAt),
+  };
+  return {
+    destination: 'KAFKA',
+    topic: getTopics().autopaymentsExecuted,
+    key: input.clientNumber,
+    headers: { autopaymentId: input.autopaymentId, requestId: input.requestId, ...(input.operationId ? { operationId: input.operationId } : {}) },
+    payload,
+    createdAt: input.finishedAt,
+  };
+}
+
 export interface NotificationInput {
-  operationId: string;
+  operationId: string | null;
   requestId: string;
   clientId: string;
   phone: string;
@@ -94,6 +139,7 @@ export interface NotificationInput {
   kind: NotificationMessage['kind'];
   text: string;
   createdAt: Date;
+  autopaymentId?: string;
 }
 
 export function notificationOutboxMessage(input: NotificationInput): OutboxMessage {
@@ -106,12 +152,13 @@ export function notificationOutboxMessage(input: NotificationInput): OutboxMessa
     kind: input.kind,
     text: input.text,
     createdAt: toMoscowIso(input.createdAt),
+    ...(input.autopaymentId ? { autopaymentId: input.autopaymentId } : {}),
   };
   return {
     destination: 'RABBIT',
     topic: getTopics().notificationsExchange,
     key: NOTIFICATION_ROUTING_KEY,
-    headers: { operationId: input.operationId, requestId: input.requestId },
+    headers: { requestId: input.requestId, ...(input.operationId ? { operationId: input.operationId } : {}), ...(input.autopaymentId ? { autopaymentId: input.autopaymentId } : {}) },
     payload,
     createdAt: input.createdAt,
   };

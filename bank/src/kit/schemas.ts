@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { isDefectCode, type DefectCode } from '../defects/catalog';
 import { OPERATION_STATUSES } from '../payments/status';
+import { DEFAULT_RELEASE, RELEASES } from '../release/release';
 import { badRequest } from '../shared/errors';
 
 const LABEL = /^[A-Za-z0-9._:-]{1,64}$/;
@@ -65,6 +66,7 @@ const scenario = z
     label,
     defects,
     sbpMode: z.enum(['NORMAL', 'REJECT', 'TIMEOUT', 'UNAVAILABLE']),
+    release: z.enum(RELEASES, `релиз банка: ${RELEASES.join(', ')}`).default(DEFAULT_RELEASE),
     bankTime,
     tariffs: z.array(tariffPatch).optional(),
     personas: z.array(personaPatch).optional(),
@@ -103,6 +105,10 @@ const reviewAction = z
   })
   .strict();
 
+const autopayRunAction = z.object({ autopaymentId: z.uuid(), label }).strict();
+
+const autopaymentsQuery = z.object({ phone: phone.optional(), autopaymentId: z.uuid().optional() }).strict();
+
 const operationsQuery = z
   .object({
     label: label.optional(),
@@ -120,6 +126,7 @@ export type ScenarioInput = z.infer<typeof scenario>;
 export type TransferActionInput = z.infer<typeof transferAction>;
 export type CheckClientActionInput = z.infer<typeof checkClientAction>;
 export type ReviewActionInput = z.infer<typeof reviewAction>;
+export type AutopayRunActionInput = z.infer<typeof autopayRunAction>;
 
 export function parseKit<T>(schema: z.ZodType<T>, raw: unknown): T {
   const result = schema.safeParse(raw ?? {});
@@ -131,4 +138,15 @@ export function parseKit<T>(schema: z.ZodType<T>, raw: unknown): T {
   );
 }
 
-export const kitSchemas = { scenario, tariffPatch, transferAction, checkClientAction, reviewAction, operationsQuery, requestsQuery, ledgerQuery };
+export const kitSchemas = {
+  scenario,
+  tariffPatch,
+  transferAction,
+  checkClientAction,
+  reviewAction,
+  autopayRunAction,
+  autopaymentsQuery,
+  operationsQuery,
+  requestsQuery,
+  ledgerQuery,
+};

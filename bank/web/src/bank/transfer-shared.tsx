@@ -39,6 +39,7 @@ export type FieldErrors = Partial<Record<'phone' | 'amount' | 'comment' | 'from'
 
 const FIELD_BY_CODE: Record<string, keyof FieldErrors> = {
   INSUFFICIENT_FUNDS: 'amount',
+  AMOUNT_REQUIRED: 'amount',
   RECIPIENT_NOT_FOUND: 'phone',
   RECIPIENT_IS_SENDER: 'phone',
   UNKNOWN_BANK: 'phone',
@@ -67,7 +68,7 @@ export function mapSubmitError(error: unknown): { fields: FieldErrors; general: 
   return { fields: {}, general: explain(error) };
 }
 
-export function useTransferSubmit() {
+export function useTransferSubmit(path = '/api/v1/transfers') {
   const navigate = useNavigate();
   const keyRef = useRef<{ signature: string; key: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -77,7 +78,7 @@ export function useTransferSubmit() {
     if (!keyRef.current || keyRef.current.signature !== signature) keyRef.current = { signature, key: newKey('web') };
     setBusy(true);
     try {
-      const operation = await clientApi.post<Operation>('/api/v1/transfers', body, { 'Idempotency-Key': keyRef.current.key });
+      const operation = await clientApi.post<Operation>(path, body, { 'Idempotency-Key': keyRef.current.key });
       navigate(`/operations/${operation.id}`);
       return null;
     } catch (error) {

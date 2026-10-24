@@ -30,46 +30,53 @@ describe('каждый ответ банка описан в контракте'
     await h.close();
   });
 
-  it('обход всех операций контракта разными токенами, ключами и испорченными запросами не даёт ни одного статуса, которого нет в описании', async () => {
-    const contract = loadContract(OPENAPI_PATH);
-    const anna = await h.login(ANNA);
-    const blocked = await h.login(PETR);
-    await h.pool.query("UPDATE clients SET status = 'BLOCKED' WHERE phone = $1", [PETR]);
-    const operator = await h.operatorLogin();
-    const senior = await h.operatorLogin('senior');
-    const tokens: Array<string | null> = [null, anna, blocked, operator, senior];
+  for (const release of ['1.0', '1.1'] as const) {
+    it(`релиз ${release}: обход всех операций контракта разными токенами, ключами и испорченными запросами не даёт ни одного статуса, которого нет в описании, а операции следующего релиза отвечают как несуществующие`, async () => {
+      await h.pool.query('UPDATE scenario SET release = $1 WHERE id = 1', [release]);
+      const contract = loadContract(OPENAPI_PATH);
+      const anna = await h.login(ANNA);
+      const blocked = await h.login(PETR);
+      await h.pool.query("UPDATE clients SET status = 'BLOCKED' WHERE phone = $1", [PETR]);
+      const operator = await h.operatorLogin();
+      const senior = await h.operatorLogin('senior');
+      const tokens: Array<string | null> = [null, anna, blocked, operator, senior];
 
-    const operations = [...contract.operations].sort((a, b) => Number(LAST.has(a.operationId)) - Number(LAST.has(b.operationId)));
-    const violations = new Set<string>();
-    let requests = 0;
+      const operations = [...contract.operations].sort((a, b) => Number(LAST.has(a.operationId)) - Number(LAST.has(b.operationId)));
+      const violations = new Set<string>();
+      let requests = 0;
 
-    const hit = async (operation: OperationSpec, token: string | null, path: string, body: unknown, headers: Record<string, string>) => {
-      const response = await h.api(token, operation.method.toUpperCase(), path, body, headers);
-      requests += 1;
-      if (!operation.responses.has(response.status)) {
-        violations.add(`${operation.method.toUpperCase()} ${operation.openApiPath} → ${response.status}`);
-      }
-    };
+      const hit = async (operation: OperationSpec, token: string | null, path: string, body: unknown, headers: Record<string, string>) => {
+        const response = await h.api(token, operation.method.toUpperCase(), path, body, headers);
+        requests += 1;
+        if (release === '1.0' && operation.release !== null) {
+          const code = (response.body as { code?: string } | null)?.code;
+        const unparsable = response.status === 400 && code === 'MALFORMED_JSON';
+        if (!unparsable && (response.status !== 404 || code !== 'NOT_FOUND')) violations.add(`${operation.method.toUpperCase()} ${operation.openApiPath} → ${response.status} на релизе 1.0`);
+        } else if (!operation.responses.has(response.status)) {
+          violations.add(`${operation.method.toUpperCase()} ${operation.openApiPath} → ${response.status}`);
+        }
+      };
 
-    for (const operation of operations) {
-      const hasPathParams = operation.openApiPath.includes('{');
-      const hasBody = operation.method !== 'get' && operation.method !== 'delete';
-      for (const token of tokens) {
-        for (const id of hasPathParams ? IDS : ['']) {
-          const base = operation.openApiPath.replace(/\{[^}]+\}/g, id);
-          for (const query of operation.method === 'get' ? QUERIES : ['']) {
-            for (const body of hasBody ? [...exampleOf(contract.document, operation), ...BODIES] : [undefined]) {
-              await hit(operation, token, `${base}${query}`, body, { 'Idempotency-Key': 'declared-key-0001' });
-              if (hasBody) await hit(operation, token, `${base}${query}`, body, {});
+      for (const operation of operations) {
+        const hasPathParams = operation.openApiPath.includes('{');
+        const hasBody = operation.method !== 'get' && operation.method !== 'delete';
+        for (const token of tokens) {
+          for (const id of hasPathParams ? IDS : ['']) {
+            const base = operation.openApiPath.replace(/\{[^}]+\}/g, id);
+            for (const query of operation.method === 'get' ? QUERIES : ['']) {
+              for (const body of hasBody ? [...exampleOf(contract.document, operation), ...BODIES] : [undefined]) {
+                await hit(operation, token, `${base}${query}`, body, { 'Idempotency-Key': 'declared-key-0001' });
+                if (hasBody) await hit(operation, token, `${base}${query}`, body, {});
+              }
             }
           }
         }
       }
-    }
 
-    assert.ok(requests > 1000, `обход сделал только ${requests} запросов`);
-    assert.deepEqual([...violations].sort(), []);
-  });
+      assert.ok(requests > 1000, `обход сделал только ${requests} запросов`);
+      assert.deepEqual([...violations].sort(), []);
+    });
+  }
 
   it('типичные отказы по правилам банка (закрытый вход, неверный код, недостаток средств, чужой получатель, ключ повтора с другим телом) описаны в контракте', async () => {
     const contract = loadContract(OPENAPI_PATH);

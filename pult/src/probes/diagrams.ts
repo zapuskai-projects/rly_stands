@@ -39,14 +39,31 @@ async function serverErrors(source: string): Promise<string[]> {
   return [line ? `строка ${line}: ${message}` : message];
 }
 
+const participantText = (participant: { name: string; alias: string | null; id: string }) =>
+  [...new Set([participant.name, participant.alias, participant.id].filter(Boolean))].join(' ');
+
 export function sequenceFacts(source: string) {
   const parsed = parseSequence(source);
+  const textOf = (id: string) => {
+    const participant = parsed.participants.find((item) => item.id === id);
+    return participant ? participantText(participant) : id;
+  };
+  const messages = parsed.messages.map((message) => ({ ...message, fromText: textOf(message.from), toText: textOf(message.to) }));
+  const blocks = parsed.blocks.map((block) => ({
+    ...block,
+    hasElse: block.branches.length > 0,
+    text: [block.label, ...block.branches.map((branch) => branch.label), ...block.messages.map((message) => message.label)].join('\n'),
+  }));
+  const participantsText = parsed.participants.map(participantText).join('\n');
   return {
     title: extractTitle(source),
     syntaxErrors: parsed.errors,
     participants: parsed.participants,
-    messages: parsed.messages,
-    blocks: parsed.blocks,
+    participantsText,
+    messages,
+    targetsText: messages.map((message) => message.toText).join('\n'),
+    blocks,
+    text: [participantsText, ...messages.map((message) => message.label), ...blocks.map((block) => block.text)].join('\n'),
   };
 }
 
@@ -102,7 +119,7 @@ async function diagramProbe<T extends { syntaxErrors: string[] }>(
 
 export const DIAGRAM_EXECUTORS: ExecutorTable = {
   'plantuml.sequence': executor<{ file: string }>(({ file }, ctx) =>
-    diagramProbe(readWorkText(ctx, file), file, sequenceFacts, { participants: [], messages: [], blocks: [] }),
+    diagramProbe(readWorkText(ctx, file), file, sequenceFacts, { participants: [], participantsText: '', messages: [], targetsText: '', blocks: [], text: '' }),
   ),
 
   'plantuml.class': executor<{ file: string }>(({ file }, ctx) =>

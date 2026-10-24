@@ -8,11 +8,13 @@ import { DOCS_DIR, WEB_DIR } from '../config';
 import { mountKit } from '../kit/routes';
 import type { BankMetrics } from '../metrics/bank-metrics';
 import { mountMetrics } from '../metrics/route';
+import { databaseReleaseSource } from '../release/release-source';
 import { mountDocsContent } from './docs-content';
 import { mountDocs } from './docs-ui';
 import { mountWeb } from './web';
 import { errorHandler, notFoundHandler } from './errors';
 import { authHandlers } from './handlers/auth';
+import { autopaymentHandlers } from './handlers/autopayments';
 import { accountHandlers } from './handlers/accounts';
 import { officeHandlers } from './handlers/office';
 import { officeAuthHandlers } from './handlers/office-auth';
@@ -21,6 +23,7 @@ import { officeOperationHandlers } from './handlers/office-operations';
 import { officeSettingsHandlers } from './handlers/office-settings';
 import { recipientHandlers } from './handlers/recipients';
 import { referenceHandlers } from './handlers/reference';
+import { templateHandlers } from './handlers/templates';
 import { transferHandlers } from './handlers/transfers';
 import { createRequestJournal, requestContext } from './request-context';
 import { registerOperations } from './router';
@@ -41,9 +44,10 @@ export function buildApp({ pool, clock, contract, lookupRecipient, kitSecret = n
   app.disable('x-powered-by');
   app.use(requestContext(clock, pool));
   const journal = createRequestJournal(pool, clock);
+  const releases = databaseReleaseSource(pool);
   app.use(journal.middleware);
-  mountDocs(app, contract);
-  mountDocsContent(app, DOCS_DIR);
+  mountDocs(app, releases);
+  mountDocsContent(app, DOCS_DIR, releases);
   if (metrics) mountMetrics(app, metrics);
   mountKit(app, { pool, clock, secret: kitSecret, lookupRecipient, journal, afterReset });
   app.use(express.json({ limit: '64kb' }));
@@ -53,16 +57,19 @@ export function buildApp({ pool, clock, contract, lookupRecipient, kitSecret = n
     {
       ...authHandlers({ pool, clock }),
       ...accountHandlers({ pool, clock }),
-      ...transferHandlers({ pool, clock, lookupRecipient }),
+      ...transferHandlers({ pool, clock, lookupRecipient, releases }),
+      ...templateHandlers({ pool, clock, lookupRecipient, releases }),
+      ...autopaymentHandlers({ pool, clock, lookupRecipient }),
       ...recipientHandlers({ pool, lookupRecipient }),
       ...officeHandlers({ pool, clock }),
       ...officeAuthHandlers(pool),
       ...officeClientHandlers({ pool, clock }),
-      ...officeOperationHandlers(pool),
+      ...officeOperationHandlers(pool, releases),
       ...officeSettingsHandlers(pool),
-      ...referenceHandlers(pool, readiness),
+      ...referenceHandlers(pool, releases, readiness),
     },
     { pool, clock },
+    releases,
   );
   mountWeb(app, WEB_DIR);
   app.use(notFoundHandler);

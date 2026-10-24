@@ -1,15 +1,19 @@
 import { Parser } from '@asyncapi/parser';
+import type { ValidateFunction } from 'ajv';
 import { readWorkText, missingFile } from './work';
 import { asRecord } from './http';
 import { executor, type ExecutorTable } from './types';
+import { samplesFromObservation, type Sample, type SamplesFrom } from './samples-source';
+import { createAjv, sampleOutcome, summarize, validateAgainst } from './validators';
 
 const ERROR_SEVERITY = 0;
 
-type PayloadField = { name: string; type: string };
+type PayloadField = { name: string; type: string; enum: string[] };
 
 type SchemaLike = {
   properties?: () => Record<string, SchemaLike> | undefined;
   type?: () => unknown;
+  enum?: () => unknown;
   items?: () => SchemaLike | undefined;
 };
 
@@ -20,7 +24,12 @@ function payloadFields(payload: unknown): PayloadField[] {
   const properties = schema?.properties?.() ?? {};
   return Object.entries(properties).map(([name, property]) => {
     const type = property.type?.();
-    return { name, type: Array.isArray(type) ? type.join('|') : String(type ?? 'any') };
+    const values = property.enum?.();
+    return {
+      name,
+      type: Array.isArray(type) ? type.join('|') : String(type ?? 'any'),
+      enum: Array.isArray(values) ? values.map(String) : [],
+    };
   });
 }
 
@@ -91,6 +100,49 @@ export async function describeAsyncApi(text: string) {
   };
 }
 
+type PayloadSchema = { json?: () => unknown };
+
+const unparsed = (samples: Sample[], errors: string[]) => ({
+  parsed: false,
+  errors,
+  sampleCount: samples.length,
+  ...summarize(samples.map((sample, index) => ({ ...sampleOutcome(index, sample.expectValid, false, errors), ok: false }))),
+});
+
+export async function checkAsyncApiSamples(text: string, channel: string | undefined, samples: Sample[]) {
+  const parser = new Parser();
+  const { document, diagnostics } = await parser.parse(text);
+  const errors = diagnostics
+    .filter((item) => item.severity === ERROR_SEVERITY)
+    .map((item) => `${item.path.length ? `${item.path.join('.')}: ` : ''}${item.message}`);
+  if (!document || errors.length) return unparsed(samples, errors.length ? errors : ['документ не разобран']);
+  const target = document.channels().all().find((item) => !channel || (item.address() ?? item.id()) === channel);
+  const schemas = (target?.messages().all() ?? [])
+    .map((message) => (message.payload() as PayloadSchema | undefined)?.json?.())
+    .filter((schema): schema is object => Boolean(schema) && typeof schema === 'object');
+  if (!schemas.length) {
+    return unparsed(samples, [channel ? `у канала ${channel} нет сообщения со схемой тела` : 'в документе нет сообщения со схемой тела']);
+  }
+  let validators: ValidateFunction[];
+  try {
+    validators = schemas.map((schema) => createAjv('draft07').compile(schema));
+  } catch (error) {
+    return unparsed(samples, [`схема тела не разобрана: ${(error as Error).message}`]);
+  }
+  return {
+    parsed: true,
+    errors: [],
+    sampleCount: samples.length,
+    ...summarize(
+      samples.map((sample, index) => {
+        const outcomes = validators.map((validate) => validateAgainst(validate, sample.data));
+        const outcome = outcomes.find((item) => item.valid) ?? (outcomes[0] as (typeof outcomes)[number]);
+        return sampleOutcome(index, sample.expectValid, outcome.valid, outcome.errors);
+      }),
+    ),
+  };
+}
+
 export const ASYNCAPI_EXECUTORS: ExecutorTable = {
   'asyncapi.describe': executor<{ file: string }>(async ({ file }, ctx) => {
     const text = readWorkText(ctx, file);
@@ -99,6 +151,17 @@ export const ASYNCAPI_EXECUTORS: ExecutorTable = {
       return await describeAsyncApi(text);
     } catch (error) {
       return failed([asRecord(error).message ? String(asRecord(error).message) : 'документ не разобран']);
+    }
+  }),
+
+  'asyncapi.samples': executor<{ file: string; channel?: string; samplesFrom: SamplesFrom }>(async ({ file, channel, samplesFrom }, ctx) => {
+    const samples = samplesFromObservation(ctx.observations, samplesFrom);
+    const text = readWorkText(ctx, file);
+    if (text === null) return unparsed(samples, [missingFile(file)]);
+    try {
+      return await checkAsyncApiSamples(text, channel, samples);
+    } catch (error) {
+      return unparsed(samples, [asRecord(error).message ? String(asRecord(error).message) : 'документ не разобран']);
     }
   }),
 };

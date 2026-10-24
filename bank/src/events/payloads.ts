@@ -18,6 +18,7 @@ export interface PaymentCreatedPayload {
   fromAccount: string;
   recipientPhone: string | null;
   recipientBankCode: string | null;
+  templateId?: string | null;
   createdAt: string;
 }
 
@@ -44,13 +45,38 @@ export interface AntifraudDecisionPayload {
   decidedAt: string;
 }
 
+export interface AutopaymentExecutedPayload {
+  eventId: string;
+  autopaymentId: string;
+  runId: string;
+  clientNumber: string;
+  runDate: string;
+  cycleDate: string;
+  attempt: number;
+  outcome: 'EXECUTED' | 'FAILED';
+  operationId: string | null;
+  operationNumber: string | null;
+  reasonCode: string | null;
+  amount: number;
+  currency: 'RUB';
+  finishedAt: string;
+}
+
+export type NotificationKind =
+  | 'TRANSFER_COMPLETED'
+  | 'TRANSFER_RECEIVED'
+  | 'AUTOPAYMENT_REMINDER'
+  | 'AUTOPAYMENT_EXECUTED'
+  | 'AUTOPAYMENT_FAILED';
+
 export interface NotificationMessage {
   messageId: string;
-  operationId: string;
+  operationId: string | null;
   clientId: string;
   phone: string;
   channel: 'SMS' | 'PUSH';
-  kind: 'TRANSFER_COMPLETED' | 'TRANSFER_RECEIVED';
+  kind: NotificationKind;
   text: string;
   createdAt: string;
+  autopaymentId?: string;
 }

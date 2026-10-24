@@ -1,4 +1,5 @@
 import type { Db } from '../db/pool';
+import { DEFAULT_RELEASE, isRelease, type Release } from '../release/release';
 
 export async function loadClockOffsetMs(db: Db): Promise<number> {
   const result = await db.query<{ clock_offset_ms: bigint }>('SELECT clock_offset_ms FROM scenario WHERE id = 1');
@@ -19,4 +20,10 @@ export type SbpMode = 'NORMAL' | 'REJECT' | 'TIMEOUT' | 'DOWN';
 export async function loadSbpMode(db: Db): Promise<SbpMode> {
   const result = await db.query<{ sbp_mode: SbpMode }>('SELECT sbp_mode FROM scenario WHERE id = 1');
   return result.rows[0]?.sbp_mode ?? 'NORMAL';
+}
+
+export async function loadRelease(db: Db): Promise<Release> {
+  const result = await db.query<{ release: string }>('SELECT release FROM scenario WHERE id = 1');
+  const value = result.rows[0]?.release;
+  return isRelease(value) ? value : DEFAULT_RELEASE;
 }

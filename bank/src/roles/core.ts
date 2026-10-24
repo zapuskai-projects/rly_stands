@@ -10,7 +10,9 @@ import { RabbitTransport, startNotificationConsumer } from '../events/rabbit';
 import { reportStatusChange } from '../events/status-report';
 import { configureTopics } from '../events/topics';
 import { RoutingTransport } from '../events/transport';
+import { startAutopayScheduler } from '../autopayments/autopay-scheduler';
 import { bankMetrics } from '../metrics/bank-metrics';
+import { databaseReleaseSource } from '../release/release-source';
 import { expireOverdueReviews } from '../review/review.service';
 import { loadBankClock, startClockSync } from '../scenario/bank-time';
 import { loadScenarioLabel } from '../scenario/scenario.repository';
@@ -58,6 +60,7 @@ export async function runCore(config: Config): Promise<void> {
   readiness.add('rabbitmq notifications consumer', notifications.isReady);
   const gateway = new HttpSbpGateway(config.sbpUrl as string, config.sbpTimeoutMs);
   const dispatcher = startSbpDispatcher(deps, gateway, config.sbpTimeoutMs);
+  const autopayments = startAutopayScheduler({ ...deps, lookupRecipient: gateway.lookup }, databaseReleaseSource(pool));
   let sweeping = false;
   const sweeper = setInterval(() => {
     if (sweeping) return;
@@ -88,6 +91,7 @@ export async function runCore(config: Config): Promise<void> {
   const server: Server = app.listen(config.port, '0.0.0.0', () => logger.info('bank core started', { port: config.port }));
   onShutdown(async () => {
     clearInterval(sweeper);
+    autopayments.stop();
     clockSync.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await Promise.all([publisher.stop(), decisions.stop(), notifications.stop(), dispatcher.stop()]);

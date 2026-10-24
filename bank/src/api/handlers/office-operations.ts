@@ -4,6 +4,7 @@ import { findClientById } from '../../clients/clients.repository';
 import { listOfficeOperations, type OfficeOperationFilter } from '../../office/operations.repository';
 import { findOperationOfAnyClient, loadStatusHistories, type OperationType } from '../../payments/operations.repository';
 import type { OperationStatus } from '../../payments/status';
+import type { ReleaseSource } from '../../release/release-source';
 import { findReviewItem } from '../../review/review.repository';
 import { notFound } from '../../shared/errors';
 import { operationDto, reviewItemDto } from '../dto';
@@ -21,7 +22,7 @@ function toFilter(query: Record<string, unknown>): OfficeOperationFilter {
   return filter;
 }
 
-export function officeOperationHandlers(pool: Pool): Record<string, Handler> {
+export function officeOperationHandlers(pool: Pool, releases: ReleaseSource): Record<string, Handler> {
   return {
     listOfficeOperations: async (ctx) => {
       const limit = (ctx.query.limit as number | undefined) ?? DEFAULT_PAGE_SIZE;
@@ -41,7 +42,7 @@ export function officeOperationHandlers(pool: Pool): Record<string, Handler> {
         status: 200,
         operationId,
         body: {
-          operation: operationDto(operation, histories.get(operation.id) ?? []),
+          operation: operationDto(operation, histories.get(operation.id) ?? [], await releases.atLeast('1.1')),
           client: { number: client?.number ?? '', fullName: client?.fullName ?? '' },
           antifraud: decision ? antifraudResultDto(decision) : null,
           review: review ? reviewItemDto(review) : null,

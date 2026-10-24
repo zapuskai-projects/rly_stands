@@ -12,6 +12,7 @@ import {
 import type { OperationStatus } from '../../payments/status';
 import type { TransferCommand } from '../../payments/transfer-command';
 import { createTransfer } from '../../payments/transfer.service';
+import type { ReleaseSource } from '../../release/release-source';
 import type { RecipientNameLookup } from '../../sbp/gateway';
 import { BANK } from '../../shared/bank-identity';
 import { badRequest, notFound } from '../../shared/errors';
@@ -22,6 +23,7 @@ interface Deps {
   pool: Pool;
   clock: BankClock;
   lookupRecipient: RecipientNameLookup;
+  releases: ReleaseSource;
 }
 
 interface TransferBody {
@@ -71,14 +73,14 @@ function toFilter(query: Record<string, unknown>): OperationFilter {
   return filter;
 }
 
-async function loadOperationDto(pool: Pool, clientId: string, operationId: string) {
+async function loadOperationDto(pool: Pool, releases: ReleaseSource, clientId: string, operationId: string) {
   const operation = await findClientOperation(pool, clientId, operationId);
   if (!operation) throw notFound('OPERATION_NOT_FOUND', 'Операция не найдена');
   const histories = await loadStatusHistories(pool, [operation.id]);
-  return operationDto(operation, histories.get(operation.id) ?? []);
+  return operationDto(operation, histories.get(operation.id) ?? [], await releases.atLeast('1.1'));
 }
 
-export function transferHandlers({ pool, clock, lookupRecipient }: Deps): Record<string, Handler> {
+export function transferHandlers({ pool, clock, lookupRecipient, releases }: Deps): Record<string, Handler> {
   return {
     createTransfer: async (ctx) => {
       const clientId = clientIdOf(ctx);
@@ -92,7 +94,7 @@ export function transferHandlers({ pool, clock, lookupRecipient }: Deps): Record
           attemptLabel: ctx.attemptLabel,
         },
       );
-      const body = await loadOperationDto(pool, clientId, result.operationId);
+      const body = await loadOperationDto(pool, releases, clientId, result.operationId);
       return {
         status: result.replayed ? 200 : 201,
         body,
@@ -106,11 +108,12 @@ export function transferHandlers({ pool, clock, lookupRecipient }: Deps): Record
       const offset = (ctx.query.offset as number | undefined) ?? 0;
       const { rows, total } = await listClientOperations(pool, clientId, toFilter(ctx.query), limit, offset);
       const histories = await loadStatusHistories(pool, rows.map((row) => row.id));
-      const items = rows.map((row) => operationDto(row, histories.get(row.id) ?? []));
+      const withTemplate = await releases.atLeast('1.1');
+      const items = rows.map((row) => operationDto(row, histories.get(row.id) ?? [], withTemplate));
       return { status: 200, body: { items, total, limit, offset } };
     },
     getOperation: async (ctx) => {
-      const body = await loadOperationDto(pool, clientIdOf(ctx), String(ctx.params.operationId));
+      const body = await loadOperationDto(pool, releases, clientIdOf(ctx), String(ctx.params.operationId));
       return { status: 200, body, operationId: body.id };
     },
   };

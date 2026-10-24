@@ -20,7 +20,7 @@ paths:
       operationId: kitScenario
       summary: Подготовить банк к задаче
       description: |
-        Метка, сбои, режим СБП и время банка применяются целиком или не применяются вовсе. Тарифы и персоны правятся частично: названные поля меняются, остальные остаются. `bankTime` ставит часы банка на это время, дальше они идут от него; `null` возвращает реальное время.
+        Метка, сбои, режим СБП, релиз и время банка применяются целиком или не применяются вовсе. Тарифы и персоны правятся частично: названные поля меняются, остальные остаются. `bankTime` ставит часы банка на это время, дальше они идут от него; `null` возвращает реальное время.
         Режим `UNAVAILABLE` — СБП недоступна.
         Персона — клиент по телефону: можно сменить тариф, личный суточный лимит (`null` снимает его) и статус основного счёта (`ARRESTED` — арест, расходные операции отклоняются).
       requestBody:
@@ -47,7 +47,7 @@ paths:
       operationId: kitReset
       summary: Сбросить данные к сиду
       description: |
-        Удаляет операции, проводки, уведомления, ключи повтора, сеансы, журнал запросов и события на отправку, заново создаёт клиентов, счета и историю как при первом запуске, возвращает тарифы и пороги антифрода по умолчанию, очищает сценарий (метка пуста, сбои выключены, СБП в режиме NORMAL, часы банка идут по реальному времени). Старые токены клиентов и операторов перестают действовать. Номера операций начинаются заново. Топики банка в Kafka (`bank.payments.created`, `bank.payments.status-changed`, `bank.antifraud.decisions`) очищаются до текущего конца, счётчики метрик `/metrics` обнуляются.
+        Удаляет операции, проводки, уведомления, ключи повтора, сеансы, журнал запросов и события на отправку, заново создаёт клиентов, счета и историю как при первом запуске, возвращает тарифы и пороги антифрода по умолчанию, очищает сценарий (метка пуста, сбои выключены, СБП в режиме NORMAL, релиз 1.0, часы банка идут по реальному времени). Старые токены клиентов и операторов перестают действовать. Номера операций начинаются заново. Топики банка в Kafka (`bank.payments.created`, `bank.payments.status-changed`, `bank.antifraud.decisions`) очищаются до текущего конца, счётчики метрик `/metrics` обнуляются.
       responses:
         '200':
           description: Сброс выполнен
@@ -153,6 +153,61 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  /_kit/actions/autopay-run:
+    post:
+      operationId: kitAutopayRun
+      x-release: '1.1'
+      summary: Исполнить автоплатёж сейчас
+      description: |
+        Ручной запуск очередной попытки автоплатежа от имени его клиента, как будто наступил день платежа: по тем же правилам, что и в срок, с записью запуска, событием и уведомлениями. Работает только с релиза 1.1, раньше отвечает 404 `NOT_FOUND`. Автоплатёж должен быть в состоянии `ACTIVE` и без незавершённого запуска, иначе 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutopayRunRequest'
+      responses:
+        '200':
+          description: Запуск выполнен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutopayRunResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /_kit/facts/autopayments:
+    get:
+      operationId: kitAutopayments
+      x-release: '1.1'
+      summary: Шаблоны, автоплатежи и их запуски
+      description: Шаблоны переводов и автоплатежи клиента (или всех клиентов, если телефон не задан) с историей запусков от старых к новым. Работает только с релиза 1.1, раньше отвечает 404 `NOT_FOUND`.
+      parameters:
+        - name: phone
+          in: query
+          description: Телефон клиента, плюс в адресе кодируется как `%2B`
+          schema:
+            type: string
+            pattern: '^\+79[0-9]{9}$'
+        - name: autopaymentId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Факты
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutopayFacts'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /_kit/facts/operations:
     get:
       operationId: kitOperations
@@ -434,6 +489,11 @@ components:
         sbpMode:
           type: string
           enum: [NORMAL, REJECT, TIMEOUT, UNAVAILABLE]
+        release:
+          type: string
+          enum: ['1.0', '1.1', '1.2']
+          default: '1.0'
+          description: Релиз банка. Функции более поздних релизов не видны и не работают (404), в контракте и документации их нет. Без параметра — 1.0; после сброса тоже 1.0
         bankTime:
           type: [string, 'null']
           description: ISO 8601, без смещения — московское время; null — реальное время
@@ -579,6 +639,158 @@ components:
           type: string
         reasonCode:
           type: [string, 'null']
+    AutopayRunRequest:
+      type: object
+      additionalProperties: false
+      required: [autopaymentId, label]
+      properties:
+        autopaymentId:
+          type: string
+          format: uuid
+        label:
+          type: string
+          pattern: '^[A-Za-z0-9._:-]{1,64}$'
+          description: Метка попытки, как у остальных действий
+    AutopayRunResult:
+      type: object
+      additionalProperties: false
+      required: [runId, attempt, outcome, operationId, operationNumber, reasonCode, autopaymentStatus, nextRunOn]
+      properties:
+        runId:
+          type: string
+          format: uuid
+        attempt:
+          type: integer
+        outcome:
+          type: string
+          enum: [PENDING, EXECUTED, FAILED]
+        operationId:
+          type: [string, 'null']
+          format: uuid
+        operationNumber:
+          type: [string, 'null']
+        reasonCode:
+          type: [string, 'null']
+        autopaymentStatus:
+          type: string
+          enum: [ACTIVE, PAUSED, FAILED, FINISHED]
+        nextRunOn:
+          type: [string, 'null']
+          description: Дата ближайшей попытки вида 2026-12-31
+    TemplateFact:
+      type: object
+      additionalProperties: false
+      required: [id, clientPhone, name, kind, fromAccount, toAccount, recipientPhone, recipientBankCode, amountKop]
+      properties:
+        id:
+          type: string
+          format: uuid
+        clientPhone:
+          $ref: '#/components/schemas/Phone'
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [PHONE, OWN, SBP]
+        fromAccount:
+          type: string
+        toAccount:
+          type: [string, 'null']
+        recipientPhone:
+          type: [string, 'null']
+        recipientBankCode:
+          type: [string, 'null']
+        amountKop:
+          type: [integer, 'null']
+    AutopayRunFact:
+      type: object
+      additionalProperties: false
+      required: [id, runDate, cycleDate, attempt, outcome, operationId, operationNumber, reasonCode, amountKop, startedAt, finishedAt, defects]
+      properties:
+        id:
+          type: string
+          format: uuid
+        defects:
+          type: array
+          description: Сбои сценария, сработавшие на запуске, с подробностями; пусто, если ничего не сработало
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, details]
+            properties:
+              code:
+                type: string
+              details:
+                type: object
+        runDate:
+          type: string
+        cycleDate:
+          type: string
+        attempt:
+          type: integer
+        outcome:
+          type: string
+          enum: [PENDING, EXECUTED, FAILED]
+        operationId:
+          type: [string, 'null']
+          format: uuid
+        operationNumber:
+          type: [string, 'null']
+        reasonCode:
+          type: [string, 'null']
+        amountKop:
+          $ref: '#/components/schemas/Kopecks'
+        startedAt:
+          type: string
+        finishedAt:
+          type: [string, 'null']
+    AutopaymentFact:
+      type: object
+      additionalProperties: false
+      required: [id, clientPhone, templateId, templateName, status, dayOfMonth, amountKop, endsOn, nextRunOn, attempt, failureReason, runs]
+      properties:
+        id:
+          type: string
+          format: uuid
+        clientPhone:
+          $ref: '#/components/schemas/Phone'
+        templateId:
+          type: string
+          format: uuid
+        templateName:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, PAUSED, FAILED, FINISHED]
+        dayOfMonth:
+          type: integer
+        amountKop:
+          $ref: '#/components/schemas/Kopecks'
+        endsOn:
+          type: [string, 'null']
+        nextRunOn:
+          type: [string, 'null']
+        attempt:
+          type: integer
+        failureReason:
+          type: [string, 'null']
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutopayRunFact'
+    AutopayFacts:
+      type: object
+      additionalProperties: false
+      required: [templates, autopayments]
+      properties:
+        templates:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateFact'
+        autopayments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutopaymentFact'
     OperationFact:
       type: object
       additionalProperties: false
@@ -587,6 +799,10 @@ components:
         recipientPhone:
           type: [string, 'null']
           description: Телефон получателя перевода по телефону; null для перевода между своими счетами
+        templateId:
+          type: [string, 'null']
+          format: uuid
+          description: Шаблон, по которому создана операция. Поле есть только с релиза 1.1
         antifraudScore:
           type: [integer, 'null']
           description: Сумма баллов антифрода по операции; null, если антифрод её не оценивал

@@ -3,6 +3,7 @@ import type { DefectMark } from './catalog';
 export interface LimitDefectFlags {
   boundary: boolean;
   utcDay: boolean;
+  templateSkip?: boolean;
 }
 
 export type LimitDecision = (flags: LimitDefectFlags) => string | null;
@@ -15,6 +16,7 @@ export function limitDefectMarks(decide: LimitDecision, active: LimitDefectFlags
   const probes: [boolean, LimitDefectFlags, DefectMark['code']][] = [
     [active.boundary, { ...active, boundary: false }, 'limit-boundary'],
     [active.utcDay, { ...active, utcDay: false }, 'daily-limit-utc'],
+    [active.templateSkip === true, { ...active, templateSkip: false }, 'template-skips-limit'],
   ];
   for (const [isActive, without, code] of probes) {
     if (!isActive) continue;

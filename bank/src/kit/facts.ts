@@ -4,6 +4,7 @@ import { toMoscowIso } from '../clock/moscow';
 import type { Db } from '../db/pool';
 import { isTerminal, OPERATION_STATUSES } from '../payments/status';
 import { findDecision } from '../antifraud/decisions.repository';
+import { databaseReleaseSource } from '../release/release-source';
 import { listDefectMarks } from '../defects/defects.repository';
 import { ageSecondsOf, hasKopecks } from './operation-age';
 import { traceFacts, type OperationTraceFacts } from './operation-trace';
@@ -24,6 +25,7 @@ interface OperationRow {
   fee_kop: bigint;
   reject_code: string | null;
   recipient_phone: string | null;
+  template_id: string | null;
   created_at: Date;
   completed_at: Date | null;
 }
@@ -52,6 +54,7 @@ export interface KitOperationFact extends OperationTraceFacts {
   feeKop: number;
   reasonCode: string | null;
   recipientPhone: string | null;
+  templateId?: string | null;
   createdAt: string;
   ageSeconds: number;
   hasKopecks: boolean;
@@ -61,7 +64,7 @@ export interface KitOperationFact extends OperationTraceFacts {
 }
 
 const SELECT_OPERATION = `
-  SELECT o.id, o.client_id, o.number, c.phone, o.type, o.route, o.status, o.amount_kop, o.fee_kop, o.reject_code, o.recipient_phone, o.created_at, o.completed_at
+  SELECT o.id, o.client_id, o.number, c.phone, o.type, o.route, o.status, o.amount_kop, o.fee_kop, o.reject_code, o.recipient_phone, o.template_id, o.created_at, o.completed_at
   FROM operations o JOIN clients c ON c.id = o.client_id`;
 
 async function withHistory(db: Db, rows: OperationRow[], now: Date): Promise<KitOperationFact[]> {
@@ -79,6 +82,7 @@ async function withHistory(db: Db, rows: OperationRow[], now: Date): Promise<Kit
     'SELECT operation_id, defect_code FROM defect_marks WHERE operation_id = ANY($1::uuid[]) ORDER BY id',
     [ids],
   );
+  const withTemplate = await databaseReleaseSource(db).atLeast('1.1');
   return rows.map((row) => {
     const steps = history.rows.filter((step) => step.operation_id === row.id);
     const reason = row.reject_code ?? [...steps].reverse().find((step) => step.reason_code !== null)?.reason_code ?? null;
@@ -94,6 +98,7 @@ async function withHistory(db: Db, rows: OperationRow[], now: Date): Promise<Kit
       feeKop: toApiAmount(row.fee_kop),
       reasonCode: reason,
       recipientPhone: row.recipient_phone,
+      ...(withTemplate ? { templateId: row.template_id } : {}),
       createdAt: toMoscowIso(row.created_at),
       ageSeconds: ageSecondsOf(row.created_at, now),
       hasKopecks: hasKopecks(row.amount_kop),

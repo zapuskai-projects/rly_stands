@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { BANK_EXECUTORS } from './bank';
+import { autopaymentRuns, BANK_EXECUTORS, requestRoute, statusClass, withRoutes, withTemplateFlag } from './bank';
 import { hasFunding, resolveBankTime, resolvePersonaTimes } from './bank-api';
 import { runActions, substituteResults } from './run';
 
@@ -34,6 +34,11 @@ const OPERATION = {
   notifications: [{ channel: 'SMS', beforeCompletion: true }, { channel: 'PUSH', beforeCompletion: false }],
 };
 
+const AUTOPAYMENTS = {
+  templates: [{ id: 'tpl-1', name: 'Аренда' }],
+  autopayments: [{ id: 'ap-1', status: 'ACTIVE', runs: [{ outcome: 'FAILED' }, { outcome: 'FAILED' }, { outcome: 'EXECUTED' }, { outcome: 'PENDING' }] }, { id: 'ap-2', status: 'FINISHED', runs: [] }],
+};
+
 before(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'kit-bank-test-'));
   writeFileSync(join(dataDir, 'bank-secret'), 'topsecret\n');
@@ -51,6 +56,9 @@ before(async () => {
     if (url.startsWith('/_kit/facts/operations')) return send(200, [OPERATION]);
     if (url.startsWith('/_kit/facts/ledger')) return send(200, { balanceKop: 100, postingsSumKop: 100, consistent: true, holdsKop: 0 });
     if (url.startsWith('/_kit/facts/requests')) return send(200, { requests: [{ method: 'POST', path: '/api/v1/transfers', status: 201 }] });
+    if (url.startsWith('/_kit/facts/autopayments?phone=%2B79990000404')) return send(404, { code: 'NOT_FOUND' });
+    if (url.startsWith('/_kit/facts/autopayments')) return send(200, AUTOPAYMENTS);
+    if (url === '/_kit/actions/autopay-run') return send(200, { runId: 'run-1', attempt: 2, outcome: 'FAILED', operationId: null, operationNumber: null, reasonCode: 'INSUFFICIENT_FUNDS', autopaymentStatus: 'ACTIVE', nextRunOn: '2026-10-22' });
     if (url.startsWith('/_kit/facts/tariffs/NOPE')) return send(404, {});
     if (url.startsWith('/_kit/facts/tariffs/')) return send(200, { code: 'START', dailyLimitKop: 15000000 });
     if (url === '/_kit/actions/transfer') return send(201, { operationId: 'op-9', number: 'ZB0009', status: 'CREATED' });
@@ -106,9 +114,65 @@ describe('проверки банка', () => {
   it('книга, журнал запросов и тариф', async () => {
     assert.equal(((await run('bank.ledger', { account: '4081' })) as { consistent: boolean }).consistent, true);
     assert.deepEqual(((await run('bank.ledger', {})) as { inconsistent: unknown[] }).inconsistent, []);
-    assert.equal(((await run('bank.requestLog', { label: 'k7f3qa' })) as { count: number }).count, 1);
+    const journal = (await run('bank.requestLog', { label: 'k7f3qa' })) as { count: number; requests: Array<Record<string, unknown>> };
+    assert.equal(journal.count, 1);
+    assert.deepEqual([journal.requests[0]?.route, journal.requests[0]?.statusClass], ['/api/v1/transfers', '2xx']);
     assert.equal(((await run('bank.tariff', { code: 'START' })) as { exists: boolean }).exists, true);
     assert.equal(((await run('bank.tariff', { code: 'NOPE' })) as { exists: boolean }).exists, false);
+  });
+
+  it('автоплатежи: шаблоны, автоплатежи и счётчики запусков по итогам, телефон уходит в запросе', async () => {
+    seen.length = 0;
+    const facts = (await run('bank.autopayments', { phone: '+79990000001' })) as Record<string, unknown>;
+    assert.equal(seen[0]?.url, '/_kit/facts/autopayments?phone=%2B79990000001');
+    assert.deepEqual(
+      ['count', 'templatesCount', 'runsCount', 'executedRuns', 'failedRuns', 'pendingRuns'].map((field) => facts[field]),
+      [2, 1, 4, 1, 2, 1],
+    );
+    assert.equal((facts.autopayments as unknown[]).length, 2);
+    assert.equal((facts.templates as unknown[]).length, 1);
+    assert.equal((facts.runs as unknown[]).length, 4);
+  });
+
+  it('запуски автоплатежей одним списком: владелец, телефон клиента и коды сбоев на запуске', () => {
+    const runs = autopaymentRuns([
+      { id: 'ap-1', clientPhone: '+79990000001', runs: [{ id: 'r1', outcome: 'FAILED', defects: [{ code: 'autopay-no-retry', details: {} }] }, { id: 'r0', outcome: 'EXECUTED', defects: [] }] },
+      { id: 'ap-2', clientPhone: '+79990000002', runs: [] },
+    ]);
+    assert.deepEqual(runs.map((run) => [(run as Record<string, unknown>).id, run.autopaymentId, run.clientPhone, run.defectCodes]), [
+      ['r1', 'ap-1', '+79990000001', ['autopay-no-retry']],
+      ['r0', 'ap-1', '+79990000001', []],
+    ]);
+  });
+
+  it('журнал запросов: маршрут без идентификаторов и класс ответа', () => {
+    const id = '5a1e7c3d-2b4f-4a6e-9c8d-1f0e2d3c4b5a';
+    assert.equal(requestRoute(`/api/v1/templates/${id}/transfers`), '/api/v1/templates/{id}/transfers');
+    assert.equal(requestRoute(`/api/v1/sandbox/autopayments/${id}/run`), '/api/v1/sandbox/autopayments/{id}/run');
+    assert.equal(requestRoute('/api/v1/templates'), '/api/v1/templates');
+    assert.equal(requestRoute(`/api/v1/operations/${id}`), '/api/v1/operations/{id}');
+    assert.deepEqual([statusClass(201), statusClass(409), statusClass(500)], ['2xx', '4xx', '5xx']);
+    assert.deepEqual(withRoutes([{ method: 'DELETE', path: `/api/v1/templates/${id}`, status: 204 }]), [
+      { method: 'DELETE', path: `/api/v1/templates/${id}`, status: 204, route: '/api/v1/templates/{id}', statusClass: '2xx' },
+    ]);
+  });
+
+  it('операции: признак «сделана по шаблону»', () => {
+    assert.deepEqual(
+      withTemplateFlag([{ number: 'A', templateId: 'tpl-1' }, { number: 'B', templateId: null }, { number: 'C' }]).map((item) => item.byTemplate),
+      [true, false, false],
+    );
+  });
+
+  it('автоплатежи до релиза 1.1 — понятная ошибка, а не пустые факты', async () => {
+    await assert.rejects(run('bank.autopayments', { phone: '+79990000404' }), /доступны с релиза 1\.1/);
+  });
+
+  it('ручной запуск автоплатежа уходит с меткой попытки и возвращает итог попытки', async () => {
+    seen.length = 0;
+    const result = (await run('bank.autopayRun', { autopaymentId: 'ap-1' })) as Record<string, unknown>;
+    assert.deepEqual(seen[0]?.body, { autopaymentId: 'ap-1', label: 'k7f3qa' });
+    assert.deepEqual([result.attempt, result.outcome, result.reasonCode, result.autopaymentStatus, result.nextRunOn], [2, 'FAILED', 'INSUFFICIENT_FUNDS', 'ACTIVE', '2026-10-22']);
   });
 
   it('сценарий уходит с меткой попытки, сброс — по флагу', async () => {
@@ -116,6 +180,18 @@ describe('проверки банка', () => {
     await run('bank.scenario', { reset: true, defects: ['limit-boundary'], sbpMode: 'TIMEOUT', bankTime: '23:40' });
     assert.deepEqual(seen.map((item) => item.url), ['/_kit/reset', '/_kit/scenario']);
     assert.deepEqual(seen[1]?.body, { label: 'k7f3qa', defects: ['limit-boundary'], sbpMode: 'TIMEOUT', bankTime: '23:40' });
+  });
+
+  it('релиз уходит в сценарий только когда задан, неизвестный отвергается до запроса', async () => {
+    seen.length = 0;
+    await run('bank.scenario', { release: '1.1' });
+    assert.deepEqual((seen[0]?.body as { release?: string }).release, '1.1');
+    seen.length = 0;
+    await run('bank.scenario', {});
+    assert.equal((seen[0]?.body as { release?: string }).release, undefined);
+    seen.length = 0;
+    await assert.rejects(run('bank.scenario', { reset: true, release: '2.0' }), /Релиз банка 2\.0 неизвестен/);
+    assert.equal(seen.length, 0);
   });
 
   it('перевод возвращает номер операции, метка добавляется к телу', async () => {

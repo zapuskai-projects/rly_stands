@@ -8,7 +8,7 @@ const LIMIT = rubles(150_000);
 
 function decider(usedByMoscowDay: bigint, usedByUtcDay: bigint, amount: bigint) {
   return (flags: LimitDefectFlags) =>
-    checkDailyLimit({ limit: LIMIT, usedToday: flags.utcDay ? usedByUtcDay : usedByMoscowDay, amount, strict: flags.boundary }).allowed
+    checkDailyLimit({ limit: flags.templateSkip ? LIMIT * 1_000_000n : LIMIT, usedToday: flags.utcDay ? usedByUtcDay : usedByMoscowDay, amount, strict: flags.boundary }).allowed
       ? null
       : 'DAILY_LIMIT_EXCEEDED';
 }
@@ -45,5 +45,12 @@ describe('пометки сбоев лимита', () => {
     assert.deepEqual(onlyBoundary.map((mark) => mark.code), ['limit-boundary']);
     const onlyUtc = limitDefectMarks(decider(0n, rubles(140_000), rubles(140_000)), both, {});
     assert.deepEqual(onlyUtc.map((mark) => mark.code), ['daily-limit-utc']);
+  });
+
+  it('перевод по шаблону мимо лимита помечается, когда лимит был бы превышен, и не помечается в остальных случаях', () => {
+    const on = { ...off, templateSkip: true };
+    const skipped = limitDefectMarks(decider(rubles(149_000), rubles(149_000), rubles(2_000)), on, {});
+    assert.deepEqual(skipped.map((mark) => [mark.code, mark.details.expected, mark.details.actual]), [['template-skips-limit', 'DAILY_LIMIT_EXCEEDED', 'ACCEPTED']]);
+    assert.deepEqual(limitDefectMarks(decider(0n, 0n, rubles(1_000)), on, {}), []);
   });
 });

@@ -11,6 +11,7 @@ import { limitDefectMarks, type LimitDefectFlags } from '../defects/limit-defect
 import { amountInRubles, paymentCreatedMessage } from '../events/builders';
 import { enqueueOutbox } from '../events/outbox.repository';
 import { getTopics } from '../events/topics';
+import { databaseReleaseSource } from '../release/release-source';
 import { forbidden, unprocessable } from '../shared/errors';
 import { calculateCommission, calculateCommissionDroppingKopecks } from '../tariffs/commission';
 import { effectiveDailyLimit } from '../tariffs/limits';
@@ -44,6 +45,8 @@ export interface CreateTransferInput {
   command: TransferCommand;
   requestId: string;
   attemptLabel: string | null;
+  templateId?: string;
+  defectMarks?: DefectMark[];
 }
 
 export interface CreateTransferResult {
@@ -60,6 +63,7 @@ interface PhoneTransferEconomics {
 }
 
 const NO_ECONOMICS: PhoneTransferEconomics = { fee: 0n, correctFee: 0n, dailyLimit: 0n, usedToday: 0n, usedTodayByMoscowDay: 0n };
+const UNLIMITED = 1_000_000_000_000_000n;
 
 interface TransferContext {
   defects: DefectSet;
@@ -89,6 +93,11 @@ async function phoneTransferEconomics(
   };
 }
 
+async function ownTransferFeeEconomics(db: Db, client: Client, amount: Kopecks, now: Date, defects: DefectSet): Promise<PhoneTransferEconomics> {
+  const asExternal = await phoneTransferEconomics(db, client, 'SBP', amount, now, defects);
+  return { ...NO_ECONOMICS, fee: asExternal.correctFee, correctFee: asExternal.correctFee };
+}
+
 async function processNewTransfer(tx: Db, deps: TransferDeps, client: Client, input: CreateTransferInput, context: TransferContext): Promise<string> {
   const { defects, repeatOf } = context;
   const { command } = input;
@@ -100,8 +109,13 @@ async function processNewTransfer(tx: Db, deps: TransferDeps, client: Client, in
   const locked = await lockAccounts(tx, [sourceCandidate.id, income.id, ...(target.toAccount ? [target.toAccount.id] : [])]);
   const source = locked.get(sourceCandidate.id) ?? sourceCandidate;
 
+  const ownFeeDefect = command.type === 'OWN_TRANSFER' && defects.has('regression-own-transfer-fee');
   const economics =
-    command.type === 'PHONE_TRANSFER' ? await phoneTransferEconomics(tx, client, target.route, command.amount, now, defects) : NO_ECONOMICS;
+    command.type === 'PHONE_TRANSFER'
+      ? await phoneTransferEconomics(tx, client, target.route, command.amount, now, defects)
+      : ownFeeDefect
+        ? await ownTransferFeeEconomics(tx, client, command.amount, now, defects)
+        : NO_ECONOMICS;
   const rejectionFor = (flags: LimitDefectFlags) =>
     evaluateRejection({
       type: command.type,
@@ -109,11 +123,15 @@ async function processNewTransfer(tx: Db, deps: TransferDeps, client: Client, in
       accountStatus: source.status,
       clientResident: client.resident,
       amount: command.amount,
-      dailyLimit: economics.dailyLimit,
+      dailyLimit: flags.templateSkip ? UNLIMITED : economics.dailyLimit,
       usedToday: flags.utcDay ? economics.usedToday : economics.usedTodayByMoscowDay,
       strictLimit: flags.boundary,
     });
-  const limitFlags = { boundary: defects.has('limit-boundary'), utcDay: defects.has('daily-limit-utc') };
+  const limitFlags = {
+    boundary: defects.has('limit-boundary'),
+    utcDay: defects.has('daily-limit-utc'),
+    templateSkip: defects.has('template-skips-limit') && input.templateId !== undefined,
+  };
   const rejection = rejectionFor(limitFlags);
   const fee = rejection ? 0n : economics.fee;
   const marks: DefectMark[] = [];
@@ -127,6 +145,10 @@ async function processNewTransfer(tx: Db, deps: TransferDeps, client: Client, in
       }),
     );
   }
+  if (ownFeeDefect && fee > 0n) {
+    marks.push({ code: 'regression-own-transfer-fee', details: { expected: 0, actual: toApiAmount(fee), amount: toApiAmount(command.amount) } });
+  }
+  marks.push(...(input.defectMarks ?? []));
   if (!rejection && fee !== economics.correctFee) {
     marks.push({ code: 'commission-rounding', details: { expected: toApiAmount(economics.correctFee), actual: toApiAmount(fee) } });
   }
@@ -160,6 +182,7 @@ async function processNewTransfer(tx: Db, deps: TransferDeps, client: Client, in
     comment: command.comment,
     attemptLabel: input.attemptLabel,
     requestId: input.requestId,
+    templateId: input.templateId ?? null,
     createdAt: now,
   });
   if (repeatOf) {
@@ -177,6 +200,7 @@ async function processNewTransfer(tx: Db, deps: TransferDeps, client: Client, in
     await insertIdempotencyRecord(tx, client.id, input.idempotencyKey, hashTransferCommand(command), created.id, now);
   }
   await insertDefectMarks(tx, created.id, marks, now);
+  const withTemplate = await databaseReleaseSource(tx).atLeast('1.1');
   await enqueueOutbox(
     tx,
     paymentCreatedMessage({
@@ -193,6 +217,7 @@ async function processNewTransfer(tx: Db, deps: TransferDeps, client: Client, in
       createdAt: now,
       requestId: input.requestId,
       amountInRubles: kafkaInRubles,
+      templateId: withTemplate ? (input.templateId ?? null) : undefined,
     }),
   );
   const stepOptions = (at: Date) => ({ at, requestId: input.requestId });

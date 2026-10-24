@@ -97,7 +97,7 @@ export const statementDto = (account: Account, from: string, to: string, data: S
   })),
 });
 
-export const operationDto = (operation: OperationRecord, history: readonly StatusHistoryRecord[]) => ({
+export const operationDto = (operation: OperationRecord, history: readonly StatusHistoryRecord[], withTemplate = false) => ({
   id: operation.id,
   number: operation.number,
   type: operation.type,
@@ -116,6 +116,7 @@ export const operationDto = (operation: OperationRecord, history: readonly Statu
     displayName: operation.recipientName,
   },
   comment: operation.comment,
+  ...(withTemplate ? { templateId: operation.templateId } : {}),
   rejection: operation.rejectCode ? { code: operation.rejectCode, message: operation.rejectMessage ?? '' } : null,
   createdAt: toMoscowIso(operation.createdAt),
   updatedAt: toMoscowIso(operation.updatedAt),

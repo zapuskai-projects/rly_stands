@@ -68,7 +68,7 @@ status=0
 docker run --rm --network "$NETWORK" \
   -e KIT_LIVE="$LIST" \
   -e KIT_LIVE_BANK_SECRET="$SECRET" \
-  "$IMAGE" "src/**/*.live.ts" || status=$?
+  "$IMAGE" --test-concurrency=1 "src/**/*.live.ts" || status=$?
 
 if [ "$status" -ne 0 ]; then
   for container in $(docker ps -aq --filter name='^stands-kit-bank-'); do

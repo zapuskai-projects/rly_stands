@@ -5,6 +5,8 @@ import { readBankSecret } from '../store/stores';
 
 export const BANK_MODULE = 'ЗапускБанк';
 
+export const BANK_RELEASES = ['1.0', '1.1', '1.2'];
+
 const DEFAULT_BASE = 'http://kit-bank-core:18400/_kit';
 const CALL_TIMEOUT_MS = 30_000;
 

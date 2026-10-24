@@ -5,10 +5,27 @@ import { NOON_MOSCOW } from '../testing/scenarios';
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 
-const BUSINESS_TABLES = ['accounts', 'cards', 'client_limits', 'clients', 'holds', 'notifications', 'operation_status_history', 'operations', 'partner_banks', 'postings', 'request_log', 'tariffs'];
+const BUSINESS_TABLES = [
+  'accounts',
+  'autopayment_runs',
+  'autopayments',
+  'cards',
+  'client_limits',
+  'clients',
+  'holds',
+  'notifications',
+  'operation_status_history',
+  'operations',
+  'partner_banks',
+  'postings',
+  'request_log',
+  'tariffs',
+  'transfer_templates',
+];
 const INTERNAL_TABLES = [
   'antifraud_decisions',
   'antifraud_settings',
+  'autopayment_run_marks',
   'defect_marks',
   'idempotency_keys',
   'login_challenges',

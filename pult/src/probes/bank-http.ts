@@ -4,11 +4,12 @@ import { asArray, asRecord, failure, http, str } from './http';
 import { executor, type ExecutorTable } from './types';
 
 const CALL_TIMEOUT_MS = 30_000;
-const CODE = /\b(\d{6})\b/;
+const CODE = /код входа\D{0,20}(\d{6})\b/i;
+const SMS_WINDOW = 5;
 
 type HttpParams = {
   asPhone: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
@@ -22,11 +23,13 @@ export async function loginAs(phone: string): Promise<string> {
     timeoutMs: CALL_TIMEOUT_MS,
   });
   if (!challenge.ok) throw failure(BANK_MODULE, 'вход клиента', challenge);
-  const sms = await http(BANK_MODULE, `${base}/api/v1/sandbox/sms?phone=${encodeURIComponent(phone)}&limit=1`, {
+  const sms = await http(BANK_MODULE, `${base}/api/v1/sandbox/sms?phone=${encodeURIComponent(phone)}&limit=${SMS_WINDOW}`, {
     timeoutMs: CALL_TIMEOUT_MS,
   });
   if (!sms.ok) throw failure(BANK_MODULE, 'чтение СМС с кодом входа', sms);
-  const code = CODE.exec(str(asRecord(asArray(asRecord(sms.json).items)[0]).text))?.[1];
+  const code = asArray(asRecord(sms.json).items)
+    .map((item) => CODE.exec(str(asRecord(item).text))?.[1])
+    .find(Boolean);
   if (!code) throw new ProbeError('ЗапускБанк: СМС с кодом входа не пришло');
   const token = await http(BANK_MODULE, `${base}/api/v1/auth/verify`, {
     method: 'POST',
@@ -50,6 +53,7 @@ export const BANK_HTTP_EXECUTORS: ExecutorTable = {
     return {
       status: result.status,
       code: str(body.code),
+      id: str(body.id),
       operationId: str(body.id),
       number: str(body.number),
       replayed: result.headers['idempotent-replayed'] === 'true',

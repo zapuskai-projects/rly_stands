@@ -5,7 +5,8 @@ import { Empty, ErrorBox, Loading } from '../components/States';
 import { officeApi } from '../lib/api';
 import { dayAndTime, formatPhone, normalizePhone } from '../lib/format';
 import { useAsync, useDocumentTitle } from '../lib/hooks';
-import { NOTIFICATION_KIND_LABEL } from '../lib/office-labels';
+import { notificationKindLabels } from '../lib/office-labels';
+import { releaseAtLeast, useBankRelease } from '../lib/release';
 import type { OfficeNotification, Page } from '../lib/types';
 
 const PAGE_SIZE = 20;
@@ -17,6 +18,7 @@ export function NotificationsPage() {
   const [channel, setChannel] = useState('');
   const [offset, setOffset] = useState(0);
   const [phone, setPhone] = useState<string | null>(null);
+  const kindLabels = notificationKindLabels(releaseAtLeast(useBankRelease(), '1.1'));
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -46,7 +48,7 @@ export function NotificationsPage() {
           <label htmlFor="n-kind">Вид</label>
           <select id="n-kind" className="input" value={kind} onChange={(event) => { setKind(event.target.value); setOffset(0); }} data-testid="notification-kind">
             <option value="">Любой</option>
-            {Object.entries(NOTIFICATION_KIND_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            {Object.entries(kindLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </div>
         <div className="field">
@@ -69,7 +71,7 @@ export function NotificationsPage() {
                     <tr key={item.id} data-testid="notification-row" data-kind={item.kind}>
                       <td className="mono" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>{dayAndTime(item.createdAt)}</td>
                       <td><div className="mono" style={{ fontSize: 13 }}>{formatPhone(item.phone)}</div><div className="muted" style={{ fontSize: 12.5 }}>{item.clientName ?? ''}</div></td>
-                      <td>{NOTIFICATION_KIND_LABEL[item.kind] ?? item.kind}</td>
+                      <td>{kindLabels[item.kind] ?? item.kind}</td>
                       <td><Pill tone={item.channel === 'SMS' ? 'info' : 'neutral'}>{item.channel === 'SMS' ? 'СМС' : 'Пуш'}</Pill></td>
                       <td style={{ minWidth: 240 }}>{item.text}</td>
                       <td>{item.operationNumber ? <Link to={`/office/operations?number=${item.operationNumber}`} className="mono" data-testid="notification-operation-link">{item.operationNumber}</Link> : <span className="muted">—</span>}</td>

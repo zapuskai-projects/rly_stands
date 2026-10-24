@@ -3,8 +3,9 @@ import { describe, it } from 'node:test';
 import { DEFECT_CODES, isDefectCode, NO_DEFECTS, parseDefectCodes } from './catalog';
 
 describe('каталог сбоев сценария', () => {
-  it('в каталоге восемь кодов', () => {
+  it('в каталоге двенадцать кодов', () => {
     assert.deepEqual([...DEFECT_CODES].sort(), [
+      'autopay-no-retry',
       'commission-rounding',
       'daily-limit-utc',
       'events.duplicate-delivery',
@@ -12,7 +13,10 @@ describe('каталог сбоев сценария', () => {
       'kafka-amount-mismatch',
       'limit-boundary',
       'notify-before-complete',
+      'regression-own-transfer-fee',
       'sbp-timeout-stuck',
+      'template-ignores-amount',
+      'template-skips-limit',
     ]);
   });
 

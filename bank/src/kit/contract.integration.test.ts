@@ -92,16 +92,39 @@ describe('служебный API банка совпадает с kit-api.yaml',
     assert.deepEqual(reset.body, { reset: true });
   });
 
+  it('маршруты релиза 1.1 отвечают по описанию: 404 до релиза, после него запуск, факты, неверные запросы', async () => {
+    conforms('kitAutopayRun', await h.kit('POST', '/_kit/actions/autopay-run', { autopaymentId: '0b2f4a5e-1c3d-4e5f-8a9b-0c1d2e3f4a5b', label: 'task-6:auto' }));
+    conforms('kitAutopayments', await h.kit('GET', '/_kit/facts/autopayments'));
+    await h.pool.query("UPDATE scenario SET release = '1.1' WHERE id = 1");
+    const token = await h.login(ANNA);
+    const accounts = await h.api(token, 'GET', '/api/v1/accounts');
+    const from = (pick(accounts.body, 'items') as { number: string }[])[0]?.number;
+    const template = await h.api(token, 'POST', '/api/v1/templates', { name: 'Пётр', kind: 'PHONE', fromAccount: from, recipientPhone: PETR, amount: 100_000 });
+    const autopayment = await h.api(token, 'POST', '/api/v1/autopayments', { templateId: pick(template.body, 'id'), dayOfMonth: 25 });
+    const run = { autopaymentId: pick(autopayment.body, 'id'), label: 'task-6:auto' };
+    conforms('kitAutopayRun', await h.kit('POST', '/_kit/actions/autopay-run', run), run);
+    conforms('kitAutopayRun', await h.kit('POST', '/_kit/actions/autopay-run', run));
+    conforms('kitAutopayRun', await h.kit('POST', '/_kit/actions/autopay-run', { autopaymentId: '0b2f4a5e-1c3d-4e5f-8a9b-0c1d2e3f4a5b', label: 'task-6:auto' }));
+    conforms('kitAutopayRun', await h.kit('POST', '/_kit/actions/autopay-run', { autopaymentId: 'x' }));
+    await h.drain();
+    conforms('kitAutopayments', await h.kit('GET', '/_kit/facts/autopayments'));
+    conforms('kitAutopayments', await h.kit('GET', `/_kit/facts/autopayments?phone=${encodeURIComponent(ANNA)}`));
+    conforms('kitAutopayments', await h.kit('GET', '/_kit/facts/autopayments?phone=1'));
+    conforms('kitOperations', await h.kit('GET', '/_kit/facts/operations?label=task-6%3Aauto'));
+  });
+
   it('описание содержит ровно маршруты банка', () => {
     assert.deepEqual(
       contract.operations.map((item) => `${item.method.toUpperCase()} ${item.openApiPath}`).sort(),
       [
+        'GET /_kit/facts/autopayments',
         'GET /_kit/facts/clock',
         'GET /_kit/facts/ledger',
         'GET /_kit/facts/operations',
         'GET /_kit/facts/operations/{idOrNumber}',
         'GET /_kit/facts/requests',
         'GET /_kit/facts/tariffs/{code}',
+        'POST /_kit/actions/autopay-run',
         'POST /_kit/actions/check-client',
         'POST /_kit/actions/review',
         'POST /_kit/actions/set-tariff',
@@ -110,6 +133,11 @@ describe('служебный API банка совпадает с kit-api.yaml',
         'POST /_kit/scenario',
       ],
     );
+  });
+
+  it('маршруты релиза 1.1 помечены в описании служебного API', () => {
+    const marked = contract.operations.filter((item) => item.release === '1.1').map((item) => item.operationId).sort();
+    assert.deepEqual(marked, ['kitAutopayRun', 'kitAutopayments']);
   });
 
   it('служебные маршруты и их описание не видны ни в документации, ни в публичном контракте', async () => {

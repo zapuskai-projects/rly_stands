@@ -7,6 +7,7 @@ import { extractBearerToken } from '../auth/codes';
 import { BankError, type ErrorDetail } from '../shared/errors';
 import { logger } from '../shared/logger';
 import { ROOT_FIELD, type Contract, type OperationSpec } from './contract';
+import { requireRelease, type ReleaseSource } from '../release/release-source';
 import { recordOutcome } from './request-context';
 
 export interface HandlerContext {
@@ -111,7 +112,7 @@ async function execute(req: Request, res: Response, operation: OperationSpec, ha
   respond(res, operation, requestId, result);
 }
 
-export function registerOperations(app: Express, contract: Contract, handlers: Record<string, Handler>, auth: AuthDeps): void {
+export function registerOperations(app: Express, contract: Contract, handlers: Record<string, Handler>, auth: AuthDeps, releases: ReleaseSource): void {
   const declared = new Set(contract.operations.map((operation) => operation.operationId));
   const missing = [...declared].filter((id) => !handlers[id]);
   const extra = Object.keys(handlers).filter((id) => !declared.has(id));
@@ -120,7 +121,8 @@ export function registerOperations(app: Express, contract: Contract, handlers: R
   }
   for (const operation of contract.operations) {
     const handler = handlers[operation.operationId] as Handler;
-    app[operation.method](operation.expressPath, async (req: Request, res: Response) => {
+    const available = operation.release ? [requireRelease(releases, operation.release)] : [];
+    app[operation.method](operation.expressPath, ...available, async (req: Request, res: Response) => {
       try {
         await execute(req, res, operation, handler, auth);
       } catch (error) {

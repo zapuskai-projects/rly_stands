@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { OPENAPI_PATH } from '../config';
-import { loadContract, type OperationSpec } from './contract';
+import { PROBE_OPENAPI } from '../testing/release-spec';
+import { loadContract, parseContract, type OperationSpec } from './contract';
 
 const contract = loadContract(OPENAPI_PATH);
+const firstRelease = contract.operations.filter((item) => item.release === null);
 const operation = (id: string): OperationSpec => {
   const found = contract.operations.find((item) => item.operationId === id);
   if (!found) throw new Error(`нет операции ${id}`);
@@ -19,7 +21,7 @@ const validPhoneTransfer = {
 
 describe('контракт OpenAPI', () => {
   it('содержит все операции API с уникальными идентификаторами', () => {
-    const ids = contract.operations.map((item) => item.operationId).sort();
+    const ids = firstRelease.map((item) => item.operationId).sort();
     assert.equal(new Set(ids).size, ids.length);
     for (const id of [
       'approveReview', 'createTransfer', 'getAccount', 'getHealth', 'getOfficeClient', 'getOfficeOperation', 'getOfficeReview',
@@ -34,9 +36,9 @@ describe('контракт OpenAPI', () => {
   });
 
   it('защищены токеном клиента или оператора все операции, кроме входа, справочных и учебных', () => {
-    const open = contract.operations.filter((item) => item.auth === 'NONE').map((item) => item.operationId).sort();
+    const open = firstRelease.filter((item) => item.auth === 'NONE').map((item) => item.operationId).sort();
     assert.deepEqual(open, ['getHealth', 'listSandboxSms', 'loginOperator', 'requestLoginCode', 'verifyLoginCode']);
-    const operator = contract.operations.filter((item) => item.auth === 'OPERATOR').map((item) => item.operationId);
+    const operator = firstRelease.filter((item) => item.auth === 'OPERATOR').map((item) => item.operationId);
     assert.equal(operator.length, 14);
     assert.equal(operation('createTransfer').auth, 'CLIENT');
   });
@@ -51,6 +53,80 @@ describe('контракт OpenAPI', () => {
     assert.equal(header?.location, 'header');
     assert.equal(header?.validator.validate('retry-key-1').ok, true);
     assert.equal(header?.validator.validate('short').ok, false);
+  });
+});
+
+const NEXT_RELEASE_OPERATIONS = [
+  'cancelAutopayment',
+  'createAutopayment',
+  'createTemplate',
+  'createTemplateTransfer',
+  'deleteTemplate',
+  'listAutopaymentRuns',
+  'listAutopayments',
+  'listOfficeClientAutopayments',
+  'listOfficeClientTemplates',
+  'listTemplates',
+  'pauseAutopayment',
+  'resumeAutopayment',
+  'runSandboxAutopayment',
+  'updateTemplate',
+];
+
+describe('операции релиза 1.1 в контракте', () => {
+  it('все помечены релизом 1.1 и защищены токеном', () => {
+    const marked = contract.operations.filter((item) => item.release === '1.1');
+    assert.deepEqual(marked.map((item) => item.operationId).sort(), NEXT_RELEASE_OPERATIONS);
+    assert.equal(marked.filter((item) => item.auth === 'OPERATOR').length, 2);
+    assert.equal(marked.filter((item) => item.auth === 'CLIENT').length, 12);
+  });
+
+  it('создание шаблона принимает название с операцией или с видом и счётом, чужие поля отвергает', () => {
+    const body = operation('createTemplate').body?.validator;
+    assert.equal(body?.validate({ name: 'Аренда', fromOperationId: '0b2f4a5e-1c3d-4e5f-8a9b-0c1d2e3f4a5b' }).ok, true);
+    assert.equal(body?.validate({ name: 'Маме', kind: 'PHONE', fromAccount: '40817810800000001000', recipientPhone: '+79001110002', amount: 500000 }).ok, true);
+    assert.equal(body?.validate({ kind: 'PHONE' }).ok, false);
+    assert.equal(body?.validate({ name: '' }).ok, false);
+    assert.equal(body?.validate({ name: 'я'.repeat(41) }).ok, false);
+    assert.equal(body?.validate({ name: 'Х', kind: 'CARD' }).ok, false);
+    assert.equal(body?.validate({ name: 'Х', extra: 1 }).ok, false);
+  });
+
+  it('изменение шаблона требует хотя бы одно поле и принимает сумму null', () => {
+    const body = operation('updateTemplate').body?.validator;
+    assert.equal(body?.validate({}).ok, false);
+    assert.equal(body?.validate({ amount: null }).ok, true);
+    assert.equal(body?.validate({ name: 'Новое' }).ok, true);
+  });
+
+  it('автоплатёж принимает день месяца от 1 до 28 и дату вида 2026-12-31', () => {
+    const body = operation('createAutopayment').body?.validator;
+    const base = { templateId: '0b2f4a5e-1c3d-4e5f-8a9b-0c1d2e3f4a5b', dayOfMonth: 15 };
+    assert.equal(body?.validate(base).ok, true);
+    assert.equal(body?.validate({ ...base, amount: 100, endsOn: '2027-06-15' }).ok, true);
+    for (const dayOfMonth of [0, 29, 31, 1.5]) assert.equal(body?.validate({ ...base, dayOfMonth }).ok, false, String(dayOfMonth));
+    assert.equal(body?.validate({ ...base, endsOn: '15.06.2027' }).ok, false);
+    assert.equal(body?.validate({ dayOfMonth: 5 }).ok, false);
+  });
+
+  it('перевод по шаблону требует ключ повтора, тело необязательно', () => {
+    const spec = operation('createTemplateTransfer');
+    assert.equal(spec.params.find((param) => param.name === 'Idempotency-Key')?.required, true);
+    assert.equal(spec.body?.required, false);
+    assert.equal(spec.body?.validator.validate({ amount: 0 }).ok, false);
+    assert.equal(spec.body?.validator.validate({ amount: 100, comment: 'за июнь' }).ok, true);
+  });
+});
+
+describe('релиз операции в контракте', () => {
+  it('пометка x-release попадает в операцию, без неё операция доступна с первого релиза', () => {
+    const probe = parseContract(PROBE_OPENAPI);
+    assert.equal(probe.operations.find((item) => item.operationId === 'getReleaseProbe')?.release, '1.1');
+    assert.equal(probe.operations.find((item) => item.operationId === 'getPing')?.release, null);
+  });
+
+  it('неизвестный релиз в пометке не загружается', () => {
+    assert.throws(() => parseContract(PROBE_OPENAPI.replace("x-release: '1.1'\n      summary", "x-release: '4.4'\n      summary")), /4\.4/);
   });
 });
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { describeAsyncApi } from './asyncapi';
+import { checkAsyncApiSamples, describeAsyncApi } from './asyncapi';
 import { describeProto } from './grpc';
 
 const ASYNCAPI = `asyncapi: 3.0.0
@@ -54,7 +54,7 @@ describe('asyncapi.describe', () => {
         messages: [
           {
             name: 'DocumentCreated',
-            fields: [{ name: 'id', type: 'string' }, { name: 'amount', type: 'number' }],
+            fields: [{ name: 'id', type: 'string', enum: [] }, { name: 'amount', type: 'number', enum: [] }],
             fieldNames: ['id', 'amount'],
             kafkaKey: null,
           },
@@ -100,6 +100,31 @@ operations:
     assert.deepEqual(facts.channels[0]?.messages[0]?.fieldNames, ['id', 'customer', 'customer.phone', 'items', 'items[].sku']);
   });
 
+  it('допустимые значения поля попадают в факты', async () => {
+    const facts = await describeAsyncApi(`asyncapi: 2.6.0
+info:
+  title: События
+  version: 1.0.0
+channels:
+  bank.autopayments.executed:
+    subscribe:
+      message:
+        name: AutopaymentExecuted
+        payload:
+          type: object
+          properties:
+            outcome:
+              type: string
+              enum: [EXECUTED, FAILED]
+            reasonCode:
+              type: [string, 'null']
+`);
+    assert.deepEqual(facts.channels[0]?.messages[0]?.fields, [
+      { name: 'outcome', type: 'string', enum: ['EXECUTED', 'FAILED'] },
+      { name: 'reasonCode', type: 'string|null', enum: [] },
+    ]);
+  });
+
   it('привязка Kafka key: тип, описание и признак «ключ — номер клиента»', async () => {
     const document = (key: string) => `asyncapi: 2.6.0
 info:
@@ -139,6 +164,62 @@ ${key}
     assert.ok(incomplete.errors.length > 0);
     const other = await describeAsyncApi('title: x');
     assert.equal(other.parsed, false);
+  });
+});
+
+describe('asyncapi.samples', () => {
+  const document = (operationId: string) => `asyncapi: 2.6.0
+info:
+  title: События
+  version: 1.0.0
+channels:
+  bank.autopayments.executed:
+    subscribe:
+      message:
+        name: AutopaymentExecuted
+        payload:
+          type: object
+          additionalProperties: false
+          required: [outcome, operationId]
+          properties:
+            outcome:
+              type: string
+              enum: [EXECUTED, FAILED]
+            operationId:
+              ${operationId}
+`;
+  const executed = { data: { outcome: 'EXECUTED', operationId: 'op-1' }, expectValid: true };
+  const failedAttempt = { data: { outcome: 'FAILED', operationId: null }, expectValid: true };
+
+  it('события с null проходят, если поле описано с null', async () => {
+    const facts = await checkAsyncApiSamples(document('type: [string, "null"]'), 'bank.autopayments.executed', [executed, failedAttempt]);
+    assert.equal(facts.parsed, true);
+    assert.equal(facts.sampleCount, 2);
+    assert.equal(facts.allOk, true);
+  });
+
+  it('поле без null не пропускает событие неудачной попытки и называет причину', async () => {
+    const facts = await checkAsyncApiSamples(document('type: string'), 'bank.autopayments.executed', [executed, failedAttempt]);
+    assert.equal(facts.allOk, false);
+    assert.deepEqual(facts.results.map((item) => item.ok), [true, false]);
+    assert.match(facts.results[1]?.errors.join(' ') ?? '', /operationId/);
+  });
+
+  it('неизвестное значение перечисления и лишнее поле не проходят', async () => {
+    const facts = await checkAsyncApiSamples(document('type: [string, "null"]'), undefined, [
+      { data: { outcome: 'DONE', operationId: null }, expectValid: true },
+      { data: { outcome: 'EXECUTED', operationId: null, extra: 1 }, expectValid: true },
+    ]);
+    assert.deepEqual(facts.results.map((item) => item.ok), [false, false]);
+  });
+
+  it('нет такого канала или документ не разбирается — ни один пример не проходит', async () => {
+    const noChannel = await checkAsyncApiSamples(document('type: string'), 'bank.other', [executed]);
+    assert.equal(noChannel.allOk, false);
+    assert.match(noChannel.errors.join(' '), /bank\.other/);
+    const broken = await checkAsyncApiSamples('title: x', undefined, [executed]);
+    assert.equal(broken.parsed, false);
+    assert.equal(broken.allOk, false);
   });
 });
 

@@ -8,7 +8,9 @@ import { explain, officeApi } from '../lib/api';
 import { formatAccountNumber, formatPhone, formatWholeRubles, fullDate, parseAmount } from '../lib/format';
 import { useAsync, useDocumentTitle } from '../lib/hooks';
 import { CLIENT_KIND_LABEL } from '../lib/office-labels';
+import { releaseAtLeast, useBankRelease } from '../lib/release';
 import type { OfficeClientDetails } from '../lib/types';
+import { ClientTemplates } from './ClientTemplates';
 import { OfficeOperationTable } from './OfficeOperationTable';
 import { useOperator } from './office-context';
 
@@ -68,6 +70,7 @@ export function ClientPage() {
   const { id = '' } = useParams();
   const [toast, setToast] = useState<string | null>(null);
   const state = useAsync(() => officeApi.get<OfficeClientDetails>(`/api/v1/office/clients/${id}`), [id]);
+  const release = useBankRelease();
   const data = state.data;
   useDocumentTitle(data ? `${data.client.fullName} · ЗапускБанк` : 'Клиент · ЗапускБанк');
 
@@ -127,6 +130,7 @@ export function ClientPage() {
         <h3>Последние операции</h3>
         {data.recentOperations.length > 0 ? <OfficeOperationTable rows={data.recentOperations} showClient={false} /> : <span className="muted">Операций пока нет</span>}
       </section>
+      {releaseAtLeast(release, '1.1') ? <ClientTemplates clientId={id} /> : null}
       <Toast message={toast} onClose={() => setToast(null)} />
     </div>
   );

@@ -3,8 +3,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 import express from 'express';
-import { OPENAPI_PATH } from '../config';
-import { loadContract } from './contract';
+import { releaseSource } from '../release/release-source';
 import { mountDocs } from './docs-ui';
 
 describe('документация API: Swagger UI и файл контракта', () => {
@@ -13,7 +12,7 @@ describe('документация API: Swagger UI и файл контракт�
 
   before(async () => {
     const app = express();
-    mountDocs(app, loadContract(OPENAPI_PATH));
+    mountDocs(app, releaseSource(async () => '1.0'));
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -41,6 +40,12 @@ describe('документация API: Swagger UI и файл контракт�
     assert.ok(html.includes('ЗапускБанк API'));
     const asset = await fetch(`${base}/api/docs/swagger-ui-bundle.js`);
     assert.equal(asset.status, 200);
+  });
+
+  it('Swagger UI читает контракт у банка, чтобы видеть его для текущего релиза', async () => {
+    const init = await fetch(`${base}/api/docs/swagger-ui-init.js`);
+    assert.equal(init.status, 200);
+    assert.ok((await init.text()).includes('/api/openapi.yaml'));
   });
 
   it('на служебные пути документации ничего лишнего не отдаётся', async () => {

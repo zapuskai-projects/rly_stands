@@ -29,6 +29,7 @@ export interface OperationRecord {
   rejectCode: string | null;
   rejectMessage: string | null;
   requestId: string | null;
+  templateId: string | null;
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
@@ -62,6 +63,7 @@ interface OperationRow {
   reject_code: string | null;
   reject_message: string | null;
   request_id: string | null;
+  template_id: string | null;
   created_at: Date;
   updated_at: Date;
   completed_at: Date | null;
@@ -71,7 +73,7 @@ const SELECT_VIEW = `
   SELECT o.id, o.number, o.client_id, o.type, o.route, o.status, o.from_account_id, fa.number AS from_account_number,
          o.to_account_id, ta.number AS to_account_number, o.recipient_phone, o.recipient_bank_code,
          pb.name AS recipient_bank_name, o.recipient_name, o.amount_kop, o.fee_kop, o.comment,
-         o.reject_code, o.reject_message, o.request_id, o.created_at, o.updated_at, o.completed_at
+         o.reject_code, o.reject_message, o.request_id, o.template_id, o.created_at, o.updated_at, o.completed_at
   FROM operations o
   JOIN accounts fa ON fa.id = o.from_account_id
   LEFT JOIN accounts ta ON ta.id = o.to_account_id
@@ -99,6 +101,7 @@ function mapOperation(row: OperationRow): OperationRecord {
     rejectCode: row.reject_code,
     rejectMessage: row.reject_message,
     requestId: row.request_id,
+    templateId: row.template_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
@@ -119,14 +122,15 @@ export interface NewOperation {
   comment: string | null;
   attemptLabel: string | null;
   requestId: string;
+  templateId?: string | null;
   createdAt: Date;
 }
 
 export async function insertOperation(db: Db, input: NewOperation): Promise<{ id: string; number: string }> {
   const result = await db.query<{ id: string; number: string }>(
     `INSERT INTO operations (client_id, type, route, status, from_account_id, to_account_id, recipient_phone,
-       recipient_bank_code, recipient_name, amount_kop, fee_kop, comment, attempt_label, request_id, created_at, updated_at)
-     VALUES ($1, $2, $3, 'CREATED', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+       recipient_bank_code, recipient_name, amount_kop, fee_kop, comment, attempt_label, request_id, created_at, updated_at, template_id)
+     VALUES ($1, $2, $3, 'CREATED', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $15)
      RETURNING id, number`,
     [
       input.clientId,
@@ -143,6 +147,7 @@ export async function insertOperation(db: Db, input: NewOperation): Promise<{ id
       input.attemptLabel,
       input.requestId,
       input.createdAt,
+      input.templateId ?? null,
     ],
   );
   const created = result.rows[0] as { id: string; number: string };

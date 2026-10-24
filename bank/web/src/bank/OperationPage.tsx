@@ -6,9 +6,11 @@ import { Toast } from '../components/Toast';
 import { clientApi } from '../lib/api';
 import { formatAccountNumber, formatMoney, formatPhone, timeWithSeconds, dayAndTime } from '../lib/format';
 import { useAsync, useDocumentTitle } from '../lib/hooks';
+import { releaseAtLeast, useBankRelease } from '../lib/release';
 import { isActive, statusHint, statusTone, TYPE_LABEL } from '../lib/status';
 import { buildTimeline } from '../lib/timeline';
 import type { Operation } from '../lib/types';
+import { SaveAsTemplate } from './SaveAsTemplate';
 
 const ICON_PATH: Record<string, string> = {
   ok: 'M6 12.5 L10.5 17 L18 8',
@@ -49,6 +51,7 @@ function Timeline({ operation }: { operation: Operation }) {
 export function OperationPage() {
   const { id = '' } = useParams();
   const [toast, setToast] = useState<string | null>(null);
+  const release = useBankRelease();
   const state = useAsync(() => clientApi.get<Operation>(`/api/v1/operations/${id}`), [id], 2000, (operation) => isActive(operation.status));
   const operation = state.data;
   useDocumentTitle(operation ? `Операция ${operation.number} · ЗапускБанк` : 'Операция · ЗапускБанк');
@@ -137,6 +140,12 @@ export function OperationPage() {
                   <dd>{operation.comment}</dd>
                 </div>
               ) : null}
+              {operation.templateId ? (
+                <div>
+                  <dt>Способ</dt>
+                  <dd data-testid="operation-by-template">По шаблону</dd>
+                </div>
+              ) : null}
             </dl>
             <div className="action-bar">
               <button type="button" className="btn" onClick={() => void copy()} data-testid="copy-number">
@@ -146,6 +155,7 @@ export function OperationPage() {
                 Чек
               </button>
             </div>
+            {operation.status === 'COMPLETED' && releaseAtLeast(release, '1.1') ? <SaveAsTemplate operation={operation} onSaved={setToast} /> : null}
             {isActive(operation.status) ? (
               <Pill tone="info">
                 <span data-testid="operation-polling">Статус обновляется сам</span>

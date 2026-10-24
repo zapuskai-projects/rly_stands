@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import { z, type ZodType } from 'zod';
+import { parseRelease, type Release } from '../release/release';
 import type { ErrorDetail } from '../shared/errors';
 
 z.config(z.locales.ru());
@@ -32,6 +33,7 @@ export interface OperationSpec {
   openApiPath: string;
   expressPath: string;
   auth: 'NONE' | 'CLIENT' | 'OPERATOR';
+  release: Release | null;
   params: ParamSpec[];
   body: { required: boolean; validator: Validator } | null;
   responses: Map<number, Validator | null>;
@@ -194,6 +196,7 @@ export function parseContract(source: string): Contract {
         openApiPath,
         expressPath: toExpressPath(openApiPath),
         auth: authKind(security),
+        release: operation['x-release'] === undefined ? null : parseRelease(String(operation['x-release']), `Контракт: ${operationId}`),
         params: compileParams(document, [...(Array.isArray(pathItem.parameters) ? pathItem.parameters : []), ...(Array.isArray(operation.parameters) ? operation.parameters : [])], compiler, defs),
         body: bodyContent ? { required: requestBody?.required === true, validator: compiler.compile(rewriteRefs(bodyContent.schema)) } : null,
         responses: compileResponses(document, operation.responses, compiler),

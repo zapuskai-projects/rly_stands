@@ -60,9 +60,25 @@ channels:
       summary: Решение антифрода
       message:
         $ref: '#/components/messages/AntifraudDecision'
+  bank.autopayments.executed:
+    x-release: '1.1'
+    description: |
+      Kafka-топик. Публикуется после каждой попытки исполнения автоплатежа, когда итог известен: перевод выполнен (`EXECUTED`) или не выполнен (`FAILED`). Если перевод ещё проверяется, событие придёт после его завершения.
+
+      Неудачная попытка при нехватке денег или превышении суточного лимита приходит с `outcome` `FAILED` и номером попытки; автоплатёж остановится только после третьей. В заголовках — `autopaymentId`, `requestId` и, если операция создана, `operationId`.
+    servers: [kafka]
+    bindings:
+      kafka:
+        topic: bank.autopayments.executed
+        partitions: 3
+        replicas: 1
+    subscribe:
+      summary: Попытка автоплатежа завершена
+      message:
+        $ref: '#/components/messages/AutopaymentExecuted'
   bank.notifications:
     description: |
-      Очередь RabbitMQ. Банк кладёт в неё СМС и пуш строго после перехода операции в статус `COMPLETED`: по два сообщения отправителю и, при переводе внутри банка, по два получателю. Потребитель записывает сообщения в журнал уведомлений.
+      Очередь RabbitMQ. Уведомления о переводах банк кладёт в неё строго после перехода операции в статус `COMPLETED`: по два сообщения (СМС и пуш) отправителю и, при переводе внутри банка, по два получателю. Потребитель записывает сообщения в журнал уведомлений.
 
       Сообщение, которое не удалось обработать, уходит через обменник `bank.notifications.dlx` в очередь `bank.notifications.dlq`.
     servers: [rabbitmq]
@@ -80,7 +96,10 @@ channels:
         amqp:
           ack: true
       message:
-        $ref: '#/components/messages/Notification'
+        oneOf:
+          - $ref: '#/components/messages/Notification'
+          - $ref: '#/components/messages/AutopaymentNotification'
+            x-release: '1.1'
 components:
   messages:
     PaymentCreated:
@@ -118,6 +137,23 @@ components:
         $ref: '#/components/schemas/MessageHeaders'
       payload:
         $ref: '#/components/schemas/AntifraudDecision'
+    AutopaymentExecuted:
+      name: AutopaymentExecuted
+      title: Попытка автоплатежа завершена
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/MessageHeaders'
+      payload:
+        $ref: '#/components/schemas/AutopaymentExecuted'
+    AutopaymentNotification:
+      name: AutopaymentNotification
+      title: Уведомление об автоплатеже
+      summary: Напоминание накануне платежа, уведомление об исполнении и о неисполнении. Приходит в ту же очередь, что и уведомления о переводах.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/MessageHeaders'
+      payload:
+        $ref: '#/components/schemas/AutopaymentNotification'
     Notification:
       name: Notification
       title: Уведомление клиенту
@@ -137,6 +173,11 @@ components:
         requestId:
           type: string
           description: Сквозной номер запроса, который породил событие
+        autopaymentId:
+          type: string
+          format: uuid
+          x-release: '1.1'
+          description: Идентификатор автоплатежа
     PaymentCreated:
       type: object
       additionalProperties: false
@@ -177,6 +218,11 @@ components:
           type: [string, 'null']
         recipientBankCode:
           type: [string, 'null']
+        templateId:
+          type: [string, 'null']
+          format: uuid
+          x-release: '1.1'
+          description: Шаблон, по которому создана операция, `null` у обычных переводов
         createdAt:
           type: string
           format: date-time
@@ -281,6 +327,91 @@ components:
         kind:
           type: string
           enum: [TRANSFER_COMPLETED, TRANSFER_RECEIVED]
+        text:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    AutopaymentExecuted:
+      type: object
+      additionalProperties: false
+      required: [eventId, autopaymentId, runId, clientNumber, runDate, cycleDate, attempt, outcome, operationId, operationNumber, reasonCode, amount, currency, finishedAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Уникальный номер события
+        autopaymentId:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+          description: Запуск, то есть попытка исполнения
+        clientNumber:
+          type: string
+          description: Номер клиента, он же ключ сообщения
+        runDate:
+          type: string
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          description: Дата попытки, московская
+        cycleDate:
+          type: string
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          description: Дата платежа, к которому относится попытка; у повторов она та же, что у первой попытки
+        attempt:
+          type: integer
+          minimum: 1
+          maximum: 3
+          description: Номер попытки, не больше трёх
+        outcome:
+          type: string
+          enum: [EXECUTED, FAILED]
+        operationId:
+          type: [string, 'null']
+          format: uuid
+          description: Операция перевода, `null`, если банк отказал до её создания
+        operationNumber:
+          type: [string, 'null']
+        reasonCode:
+          type: [string, 'null']
+          description: Причина неудачи, например INSUFFICIENT_FUNDS, DAILY_LIMIT_EXCEEDED, ACCOUNT_ARRESTED, ANTIFRAUD_REJECTED, OPERATOR_REJECTED; у выполненной попытки `null`
+        amount:
+          type: integer
+          description: Сумма платежа в копейках
+        currency:
+          type: string
+          const: RUB
+        finishedAt:
+          type: string
+          format: date-time
+    AutopaymentNotification:
+      type: object
+      additionalProperties: false
+      required: [messageId, autopaymentId, operationId, clientId, phone, channel, kind, text, createdAt]
+      properties:
+        messageId:
+          type: string
+          format: uuid
+          description: Уникальный номер сообщения, повторная доставка не создаёт вторую запись в журнале
+        autopaymentId:
+          type: string
+          format: uuid
+        operationId:
+          type: [string, 'null']
+          format: uuid
+        clientId:
+          type: string
+          format: uuid
+        phone:
+          type: string
+          pattern: '^\+79[0-9]{9}$'
+        channel:
+          type: string
+          enum: [SMS, PUSH]
+        kind:
+          type: string
+          enum: [AUTOPAYMENT_REMINDER, AUTOPAYMENT_EXECUTED, AUTOPAYMENT_FAILED]
         text:
           type: string
         createdAt:

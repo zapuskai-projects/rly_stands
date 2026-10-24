@@ -7,6 +7,10 @@ export const DEFECT_CODES = [
   'notify-before-complete',
   'kafka-amount-mismatch',
   'events.duplicate-delivery',
+  'template-skips-limit',
+  'template-ignores-amount',
+  'autopay-no-retry',
+  'regression-own-transfer-fee',
 ] as const;
 
 export type DefectCode = (typeof DEFECT_CODES)[number];

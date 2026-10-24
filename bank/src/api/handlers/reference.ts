@@ -2,12 +2,13 @@ import type { Pool } from 'pg';
 import { listNotificationsByPhone } from '../../notifications/notifications.repository';
 import { toMoscowIso } from '../../clock/moscow';
 import { BANK } from '../../shared/bank-identity';
+import type { ReleaseSource } from '../../release/release-source';
 import type { Readiness } from '../../shared/readiness';
 import type { Handler } from '../router';
 
 const DEFAULT_SMS_LIMIT = 10;
 
-export function referenceHandlers(pool: Pool, readiness?: Readiness): Record<string, Handler> {
+export function referenceHandlers(pool: Pool, releases: ReleaseSource, readiness?: Readiness): Record<string, Handler> {
   return {
     listBanks: async () => {
       const partners = await pool.query<{ code: string; name: string }>(
@@ -35,7 +36,7 @@ export function referenceHandlers(pool: Pool, readiness?: Readiness): Record<str
         return { status: 503, body: { status: 'DOWN', database: 'DOWN' } };
       }
       if (readiness && !readiness.isReady()) return { status: 503, body: { status: 'DOWN', database: 'UP' } };
-      return { status: 200, body: { status: 'UP', database: 'UP' } };
+      return { status: 200, body: { status: 'UP', database: 'UP', release: await releases.current() } };
     },
   };
 }

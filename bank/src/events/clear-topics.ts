@@ -3,7 +3,7 @@ import { BankError } from '../shared/errors';
 import type { TopicNames } from './topics';
 
 export function clearedTopics(topics: TopicNames): string[] {
-  return [topics.paymentsCreated, topics.statusChanged, topics.antifraudDecisions];
+  return [topics.paymentsCreated, topics.statusChanged, topics.antifraudDecisions, topics.autopaymentsExecuted];
 }
 
 export async function clearKafkaTopics(kafka: Kafka, names: readonly string[]): Promise<void> {

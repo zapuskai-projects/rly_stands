@@ -2,6 +2,7 @@ import {
   accepted,
   assertSecretAccepted,
   BANK_MODULE as MODULE,
+  BANK_RELEASES,
   call,
   fetchOperation,
   hasFunding,
@@ -36,6 +37,58 @@ export function operationTotals(operations: unknown[]): { totalKop: number; tran
     transitionsCount += Math.max(0, asArray(row.statusHistory).length - 1);
   }
   return { totalKop, transitionsCount };
+}
+
+export function autopaymentTotals(templates: unknown[], autopayments: unknown[]) {
+  const runs = autopayments.flatMap((item) => asArray(asRecord(item).runs).map(asRecord));
+  const count = (outcome: string) => runs.filter((run) => run.outcome === outcome).length;
+  return {
+    count: autopayments.length,
+    templatesCount: templates.length,
+    runsCount: runs.length,
+    executedRuns: count('EXECUTED'),
+    failedRuns: count('FAILED'),
+    pendingRuns: count('PENDING'),
+  };
+}
+
+export function autopaymentRuns(autopayments: unknown[]) {
+  return autopayments.flatMap((item) => {
+    const owner = asRecord(item);
+    return asArray(owner.runs).map((run) => {
+      const row = asRecord(run);
+      return {
+        ...row,
+        autopaymentId: str(owner.id),
+        clientPhone: str(owner.clientPhone),
+        defectCodes: asArray(row.defects).map((mark) => str(asRecord(mark).code)),
+      };
+    });
+  });
+}
+
+const UUID_SEGMENT = /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi;
+
+export function requestRoute(path: string): string {
+  return path.replace(UUID_SEGMENT, '/{id}');
+}
+
+export function statusClass(status: number): string {
+  return `${Math.floor(status / 100)}xx`;
+}
+
+export function withRoutes(requests: unknown[]) {
+  return requests.map((request) => {
+    const row = asRecord(request);
+    return { ...row, route: requestRoute(str(row.path)), statusClass: statusClass(num(row.status)) };
+  });
+}
+
+export function withTemplateFlag(operations: unknown[]) {
+  return operations.map((operation) => {
+    const row = asRecord(operation);
+    return { ...row, byTemplate: typeof row.templateId === 'string' && row.templateId !== '' };
+  });
 }
 
 export function duplicateKeys(requests: unknown[]): Array<{ key: string; count: number; operations: number }> {
@@ -106,8 +159,23 @@ export const BANK_EXECUTORS: ExecutorTable = {
     const result = await call(ctx, 'GET', `/facts/operations${query(params)}`);
     if (!result.ok) throw failure(MODULE, 'чтение операций', result);
     const body = result.json;
-    const operations = Array.isArray(body) ? body : asArray(asRecord(body).operations);
+    const operations = withTemplateFlag(Array.isArray(body) ? body : asArray(asRecord(body).operations));
     return { count: operations.length, ...operationTotals(operations), operations };
+  }),
+
+  'bank.autopayments': executor<{ phone?: string; autopaymentId?: string }>(async (params, ctx) => {
+    const result = await call(ctx, 'GET', `/facts/autopayments${query(params)}`);
+    if (result.status === 404 && asRecord(result.json).code === 'AUTOPAYMENT_NOT_FOUND') {
+      throw new ProbeError(`ЗапускБанк: автоплатёж ${params.autopaymentId ?? ''} не найден`);
+    }
+    if (result.status === 404) {
+      await assertSecretAccepted(ctx);
+      throw new ProbeError('Шаблоны и автоплатежи доступны с релиза 1.1: включите его сценарием банка (release: 1.1)');
+    }
+    if (!result.ok) throw failure(MODULE, 'чтение автоплатежей', result);
+    const body = asRecord(result.json);
+    const autopayments = asArray(body.autopayments);
+    return { ...autopaymentTotals(asArray(body.templates), autopayments), templates: asArray(body.templates), autopayments, runs: autopaymentRuns(autopayments) };
   }),
 
   'bank.operation': executor<{ id: string }>(async ({ id }, ctx) => {
@@ -157,7 +225,7 @@ export const BANK_EXECUTORS: ExecutorTable = {
     if (!result.ok) throw failure(MODULE, 'чтение журнала запросов', result);
     const body = result.json;
     const requests = Array.isArray(body) ? body : asArray(asRecord(body).requests);
-    return { count: requests.length, requests, duplicateKeys: duplicateKeys(requests), ...pollFacts(requests) };
+    return { count: requests.length, requests: withRoutes(requests), duplicateKeys: duplicateKeys(requests), ...pollFacts(requests) };
   }),
 
   'bank.tariff': executor<{ code: string }>(async ({ code }, ctx) => {
@@ -174,12 +242,16 @@ export const BANK_EXECUTORS: ExecutorTable = {
     reset?: boolean;
     defects?: string[];
     sbpMode?: string;
+    release?: string;
     bankTime?: string | null;
     tariffs?: unknown[];
     personas?: unknown[];
   }>(async (params, ctx) => {
     if (!params.reset && hasFunding(params.personas)) {
       throw new ProbeError('topUpKop и history не повторяются безопасно: используйте их только с reset: true');
+    }
+    if (params.release !== undefined && !BANK_RELEASES.includes(params.release)) {
+      throw new ProbeError(`Релиз банка ${params.release} неизвестен: допустимы ${BANK_RELEASES.join(', ')}`);
     }
     if (params.reset) await accepted(ctx, '/reset', {}, 'сброс банка');
     await accepted(
@@ -189,6 +261,7 @@ export const BANK_EXECUTORS: ExecutorTable = {
         label: ctx.label,
         defects: params.defects ?? [],
         sbpMode: params.sbpMode ?? 'NORMAL',
+        ...(params.release === undefined ? {} : { release: params.release }),
         bankTime: resolveBankTime(params.bankTime),
         ...(params.tariffs ? { tariffs: params.tariffs } : {}),
         ...(params.personas ? { personas: resolvePersonaTimes(params.personas) } : {}),
@@ -205,6 +278,19 @@ export const BANK_EXECUTORS: ExecutorTable = {
       number: str(body.number),
       status: str(body.status),
       amountKop: num(params.amountKop),
+    };
+  }),
+
+  'bank.autopayRun': executor<{ autopaymentId: string }>(async ({ autopaymentId }, ctx) => {
+    const body = await accepted(ctx, '/actions/autopay-run', { autopaymentId, label: ctx.label }, 'ручной запуск автоплатежа');
+    return {
+      runId: str(body.runId),
+      attempt: num(body.attempt),
+      outcome: str(body.outcome),
+      operationId: str(body.operationId),
+      reasonCode: str(body.reasonCode),
+      autopaymentStatus: str(body.autopaymentStatus),
+      nextRunOn: str(body.nextRunOn),
     };
   }),
 

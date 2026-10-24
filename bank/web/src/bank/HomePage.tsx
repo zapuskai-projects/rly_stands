@@ -4,12 +4,14 @@ import { bankNowMs, moscowHour } from '../lib/bank-time';
 import { clientApi } from '../lib/api';
 import { formatMoney, greeting } from '../lib/format';
 import { useAsync, useDocumentTitle } from '../lib/hooks';
+import { releaseAtLeast, useBankRelease } from '../lib/release';
 import { isActive } from '../lib/status';
 import type { Account, Operation, Page } from '../lib/types';
 import { AccountTiles } from './AccountTiles';
 import { LimitsCard } from './LimitsCard';
 import { OperationList } from './OperationList';
 import { useProfile } from './profile-context';
+import { TemplatesCard } from './TemplatesCard';
 
 interface HomeData {
   accounts: Account[];
@@ -19,6 +21,7 @@ interface HomeData {
 export function HomePage() {
   useDocumentTitle('Главная · ЗапускБанк');
   const { profile } = useProfile();
+  const release = useBankRelease();
   const state = useAsync<HomeData>(
     async () => ({
       accounts: (await clientApi.get<{ items: Account[] }>('/api/v1/accounts')).items,
@@ -51,6 +54,7 @@ export function HomePage() {
             Выписка
           </Link>
         </section>
+        {releaseAtLeast(release, '1.1') ? <TemplatesCard /> : null}
         <section aria-label="Последние операции" className="card ops">
           <div className="ops-head">
             <h2>Операции</h2>

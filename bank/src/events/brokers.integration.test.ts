@@ -10,9 +10,11 @@ import { createKafka, KafkaTransport, startKafkaConsumer } from './kafka';
 import { assertNotificationTopology, RabbitTransport, startNotificationConsumer } from './rabbit';
 import { configureTopics } from './topics';
 import { RoutingTransport } from './transport';
+import { loadAsyncApi } from '../testing/asyncapi';
 import { pick, startHarness, type Harness } from '../testing/harness';
 import { checkLedger } from '../testing/ledger-check';
-import { accountOf, marksOf, NIGHT_MOSCOW, PHONES, phoneTransfer, sendTransfer, setDefects } from '../testing/scenarios';
+import { makeAutopayment, makeTemplate } from '../testing/autopay';
+import { accountOf, marksOf, moscow, NIGHT_MOSCOW, PHONES, phoneTransfer, sendTransfer, setDefects, useRelease } from '../testing/scenarios';
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const KAFKA = process.env.TEST_KAFKA_BROKERS;
@@ -52,7 +54,7 @@ describe('обмен через настоящие Kafka и RabbitMQ', { skip: R
     const kafka = createKafka((KAFKA as string).split(','), 'bank-test-cleanup');
     const admin = kafka.admin();
     await admin.connect();
-    await admin.deleteTopics({ topics: [topics.paymentsCreated, topics.statusChanged, topics.antifraudDecisions] }).catch(() => undefined);
+    await admin.deleteTopics({ topics: [topics.paymentsCreated, topics.statusChanged, topics.antifraudDecisions, topics.autopaymentsExecuted] }).catch(() => undefined);
     await admin.disconnect();
     const connection = await connect(RABBIT as string);
     const channel = await connection.createChannel();
@@ -158,6 +160,7 @@ describe('обмен через настоящие Kafka и RabbitMQ', { skip: R
     const admin = createKafka((KAFKA as string).split(','), `bank-test-offsets-${prefix}`).admin();
     await admin.connect();
     try {
+      if (!(await admin.listTopics()).includes(topic)) return 0;
       const offsets = await admin.fetchTopicOffsets(topic);
       return offsets.reduce((sum, item) => sum + (Number(item.high) - Number(item.low)), 0);
     } finally {
@@ -194,6 +197,65 @@ describe('обмен через настоящие Kafka и RabbitMQ', { skip: R
     assert.equal(await waitForReadable(topics.paymentsCreated, 1), 1);
     assert.equal(await waitForReadable(topics.antifraudDecisions, 1), 1);
     assert.equal((await readCreatedEvent(String(pick(second.body, 'id'))))?.amount, 150_050);
+  });
+
+  it('автоплатёж: топик события создаётся только с первым событием, событие лежит в настоящем Kafka, уведомления доходят через RabbitMQ', async () => {
+    const topics = configureTopics(prefix);
+    const listTopics = async (): Promise<string[]> => {
+      const admin = createKafka((KAFKA as string).split(','), `bank-test-list-${prefix}`).admin();
+      await admin.connect();
+      try {
+        return await admin.listTopics();
+      } finally {
+        await admin.disconnect();
+      }
+    };
+    await useRelease(h, '1.1');
+    h.setTime(moscow('2026-10-20T12:00:00'));
+    const anna = await h.login(PHONES.ANNA);
+    const from = await accountOf(h, anna);
+    const plain = await sendTransfer(h, anna, 'topic-key-0001', phoneTransfer(from.number, PHONES.PETR, 100_000));
+    assert.equal(await waitForStatus(anna, String(pick(plain.body, 'id')), 'COMPLETED'), 'COMPLETED');
+    assert.equal((await listTopics()).includes(topics.autopaymentsExecuted), false);
+
+    const templateId = await makeTemplate(h, anna, { name: 'Аренда', kind: 'PHONE', fromAccount: from.number, recipientPhone: PHONES.PETR, amount: 2_500_000 });
+    const id = String(pick((await makeAutopayment(h, anna, { templateId, dayOfMonth: 21 })).body, 'id'));
+    h.setTime(moscow('2026-10-21T10:00:00'));
+    const deadline = Date.now() + 40_000;
+    let outcome = 'PENDING';
+    while (outcome !== 'EXECUTED' && Date.now() < deadline) {
+      await h.autopay();
+      outcome = String(pick((await h.api(anna, 'GET', `/api/v1/autopayments/${id}/runs`)).body, 'items.0.outcome'));
+      if (outcome !== 'EXECUTED') await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    assert.equal(outcome, 'EXECUTED');
+    assert.equal(await waitForReadable(topics.autopaymentsExecuted, 1), 1);
+
+    const kafka = createKafka((KAFKA as string).split(','), `bank-test-autopay-${prefix}`);
+    const consumer = kafka.consumer({ groupId: `${prefix}autopay-reader` });
+    let event: { key: string | null; value: Record<string, unknown> } | null = null;
+    await consumer.connect();
+    await consumer.subscribe({ topic: topics.autopaymentsExecuted, fromBeginning: true });
+    await consumer.run({
+      eachMessage: async ({ message }) => {
+        event = { key: message.key?.toString() ?? null, value: JSON.parse(message.value?.toString() ?? '{}') as Record<string, unknown> };
+      },
+    });
+    const readDeadline = Date.now() + 15_000;
+    while (!event && Date.now() < readDeadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    await consumer.disconnect();
+    const read = event as { key: string | null; value: Record<string, unknown> } | null;
+    assert.equal(read?.key, '10000001');
+    assert.deepEqual([read?.value.autopaymentId, read?.value.attempt, read?.value.outcome, read?.value.amount], [id, 1, 'EXECUTED', 2_500_000]);
+    assert.equal(loadAsyncApi('1.1').payloadValidator('bank.autopayments.executed')(read?.value).ok, true);
+
+    const notificationsDeadline = Date.now() + 20_000;
+    let delivered = 0;
+    while (delivered < 2 && Date.now() < notificationsDeadline) {
+      delivered = (await h.pool.query("SELECT 1 FROM notifications WHERE kind = 'AUTOPAYMENT_EXECUTED'")).rowCount ?? 0;
+      if (delivered < 2) await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.equal(delivered, 2);
   });
 
   it('очистка не падает, если топиков ещё нет', async () => {

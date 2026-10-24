@@ -89,6 +89,8 @@ export async function request<T>(realm: Realm, method: string, path: string, opt
 export const clientApi = {
   get: <T>(path: string, query?: RequestOptions['query']) => request<T>('client', 'GET', path, { query }),
   post: <T>(path: string, body?: unknown, headers?: Record<string, string>) => request<T>('client', 'POST', path, { body }, headers),
+  patch: <T>(path: string, body: unknown) => request<T>('client', 'PATCH', path, { body }),
+  delete: <T>(path: string) => request<T>('client', 'DELETE', path),
   anonymous: <T>(method: string, path: string, options: Omit<RequestOptions, 'anonymous'> = {}) => request<T>('client', method, path, { ...options, anonymous: true }),
 };
 

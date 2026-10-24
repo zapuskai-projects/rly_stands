@@ -2,6 +2,7 @@ export interface TopicNames {
   paymentsCreated: string;
   statusChanged: string;
   antifraudDecisions: string;
+  autopaymentsExecuted: string;
   notificationsExchange: string;
   notificationsQueue: string;
   notificationsDlx: string;
@@ -16,6 +17,7 @@ export function topicNames(prefix = ''): TopicNames {
     paymentsCreated: `${prefix}bank.payments.created`,
     statusChanged: `${prefix}bank.payments.status-changed`,
     antifraudDecisions: `${prefix}bank.antifraud.decisions`,
+    autopaymentsExecuted: `${prefix}bank.autopayments.executed`,
     notificationsExchange: `${prefix}bank.notifications`,
     notificationsQueue: `${prefix}bank.notifications`,
     notificationsDlx: `${prefix}bank.notifications.dlx`,

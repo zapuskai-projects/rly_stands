@@ -24,6 +24,10 @@ tags:
   - name: Операции
   - name: Операторский офис
   - name: Справочники
+  - name: Шаблоны
+    x-release: '1.1'
+  - name: Автоплатежи
+    x-release: '1.1'
   - name: Учебный контур
 paths:
   /api/v1/auth/login:
@@ -375,6 +379,362 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
+  /api/v1/templates:
+    get:
+      tags: [Шаблоны]
+      operationId: listTemplates
+      x-release: '1.1'
+      summary: Шаблоны переводов клиента
+      description: Шаблоны в порядке создания. У клиента может быть не больше 20 шаблонов.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Шаблоны
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Шаблоны]
+      operationId: createTemplate
+      x-release: '1.1'
+      summary: Создать шаблон
+      description: |
+        Шаблон создаётся двумя способами: из выполненной операции клиента (`fromOperationId`) или вручную (`kind`, `fromAccount` и данные получателя). Название обязательно в обоих случаях.
+
+        Вид `PHONE` — перевод клиенту ЗапускБанка по телефону, `SBP` — перевод в другой банк (нужен `recipientBankCode` из справочника банков), `OWN` — перевод между своими счетами (нужен `toAccount`). Сумма в шаблоне необязательна. У шаблона, созданного из операции, сумма и сообщение берутся из операции.
+
+        Название — от 1 до 40 символов, без повторов у клиента (регистр не учитывается). Отказы: `TEMPLATE_LIMIT_REACHED` — уже 20 шаблонов, `TEMPLATE_NAME_TAKEN` — название занято, `OPERATION_NOT_FOUND` — операции нет среди операций клиента, `OPERATION_NOT_COMPLETED` — операция не выполнена.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+            examples:
+              fromOperation:
+                summary: Из выполненной операции
+                value:
+                  name: Аренда
+                  fromOperationId: 0b2f4a5e-1c3d-4e5f-8a9b-0c1d2e3f4a5b
+              manual:
+                summary: Вручную
+                value:
+                  name: Маме
+                  kind: PHONE
+                  fromAccount: '40817810800000001000'
+                  recipientPhone: '+79001110002'
+                  amount: 500000
+      responses:
+        '201':
+          description: Шаблон создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/templates/{templateId}:
+    patch:
+      tags: [Шаблоны]
+      operationId: updateTemplate
+      x-release: '1.1'
+      summary: Изменить шаблон
+      description: |
+        Меняет название, сумму, сообщение и счёт списания. Сумма `null` убирает сумму из шаблона. Получателя изменить нельзя: создайте новый шаблон. Отказы те же, что при создании: `TEMPLATE_NAME_TAKEN`, `TEMPLATE_NOT_FOUND`.
+      parameters:
+        - $ref: '#/components/parameters/TemplateIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTemplateRequest'
+      responses:
+        '200':
+          description: Шаблон после изменения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [Шаблоны]
+      operationId: deleteTemplate
+      x-release: '1.1'
+      summary: Удалить шаблон
+      description: Операции, созданные по шаблону, остаются в истории. Если по шаблону есть действующий автоплатёж, удаление отклоняется кодом `TEMPLATE_IN_USE`.
+      parameters:
+        - $ref: '#/components/parameters/TemplateIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '204':
+          description: Шаблон удалён
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/templates/{templateId}/transfers:
+    post:
+      tags: [Шаблоны]
+      operationId: createTemplateTransfer
+      x-release: '1.1'
+      summary: Перевод по шаблону
+      description: |
+        Создаёт обычную операцию своего вида с полем `templateId`. Перевод проходит те же проверки, что и перевод через `POST /api/v1/transfers`: суточный лимит, комиссию, антифрод и ручную проверку. Заголовок `Idempotency-Key` обязателен и работает так же.
+
+        Сумма в запросе заменяет сумму шаблона. Если суммы нет ни в шаблоне, ни в запросе, банк отвечает `AMOUNT_REQUIRED`. Сообщение в запросе заменяет сообщение шаблона.
+      parameters:
+        - $ref: '#/components/parameters/TemplateIdPath'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateTransferRequest'
+      responses:
+        '201':
+          description: Операция создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        '200':
+          description: Повтор запроса с тем же ключом и телом, возвращена ранее созданная операция
+          headers:
+            Idempotent-Replayed:
+              description: Всегда `true`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/autopayments:
+    get:
+      tags: [Автоплатежи]
+      operationId: listAutopayments
+      x-release: '1.1'
+      summary: Автоплатежи клиента
+      description: Все автоплатежи клиента, новые первыми, включая завершённые.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Автоплатежи
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutopaymentList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [Автоплатежи]
+      operationId: createAutopayment
+      x-release: '1.1'
+      summary: Создать автоплатёж
+      description: |
+        Автоплатёж создаётся по шаблону: день месяца от 1 до 28, сумма (нужна, если её нет в шаблоне; сумма в запросе заменяет сумму шаблона) и необязательная дата окончания включительно.
+
+        Платёж исполняется в день месяца в 10:00 по времени банка. Если создать автоплатёж в его день до 10:00, первый платёж пройдёт сегодня, после 10:00 — в следующем месяце. Отказы: `TEMPLATE_NOT_FOUND`, `AMOUNT_REQUIRED`.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAutopaymentRequest'
+            example:
+              templateId: 0b2f4a5e-1c3d-4e5f-8a9b-0c1d2e3f4a5b
+              dayOfMonth: 15
+              amount: 2500000
+              endsOn: '2027-06-15'
+      responses:
+        '201':
+          description: Автоплатёж создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Autopayment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/autopayments/{autopaymentId}:
+    delete:
+      tags: [Автоплатежи]
+      operationId: cancelAutopayment
+      x-release: '1.1'
+      summary: Отменить автоплатёж
+      description: Переводит автоплатёж из любого состояния, кроме `FINISHED`, в `FINISHED`. Запись и история запусков остаются.
+      parameters:
+        - $ref: '#/components/parameters/AutopaymentIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Автоплатёж после отмены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Autopayment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/autopayments/{autopaymentId}/pause:
+    post:
+      tags: [Автоплатежи]
+      operationId: pauseAutopayment
+      x-release: '1.1'
+      summary: Поставить автоплатёж на паузу
+      description: Только из состояния `ACTIVE`. Платежи на паузе не исполняются.
+      parameters:
+        - $ref: '#/components/parameters/AutopaymentIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Автоплатёж на паузе
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Autopayment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/autopayments/{autopaymentId}/resume:
+    post:
+      tags: [Автоплатежи]
+      operationId: resumeAutopayment
+      x-release: '1.1'
+      summary: Возобновить автоплатёж
+      description: Из состояний `PAUSED` и `FAILED`. Следующий платёж назначается на ближайший день платежа, счётчик попыток обнуляется.
+      parameters:
+        - $ref: '#/components/parameters/AutopaymentIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Автоплатёж действует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Autopayment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/autopayments/{autopaymentId}/runs:
+    get:
+      tags: [Автоплатежи]
+      operationId: listAutopaymentRuns
+      x-release: '1.1'
+      summary: История запусков автоплатежа
+      description: Каждая попытка исполнения — дата, номер попытки, итог, операция и причина. Новые запуски первыми.
+      parameters:
+        - $ref: '#/components/parameters/AutopaymentIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Запуски
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutopaymentRunList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
   /api/v1/banks:
     get:
       tags: [Справочники]
@@ -426,6 +786,35 @@ paths:
                 $ref: '#/components/schemas/SmsList'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/sandbox/autopayments/{autopaymentId}/run:
+    post:
+      tags: [Учебный контур]
+      operationId: runSandboxAutopayment
+      x-release: '1.1'
+      summary: Исполнить автоплатёж сейчас
+      description: |
+        Исполняет очередную попытку автоплатежа клиента так, будто наступил день платежа: по тем же правилам, что и в срок (лимит, комиссия, антифрод, ручная проверка), с записью запуска и событием. Автоплатёж должен быть в состоянии `ACTIVE`, предыдущий запуск — завершён. Ответ содержит запуск и состояние автоплатежа; если операция ещё проверяется, итог запуска `PENDING` и его можно дождаться запросом истории запусков.
+      parameters:
+        - $ref: '#/components/parameters/AutopaymentIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Запуск выполнен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutopaymentRunResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/ServerError'
   /api/v1/office/reviews:
@@ -770,6 +1159,62 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
+  /api/v1/office/clients/{clientId}/templates:
+    get:
+      tags: [Операторский офис]
+      operationId: listOfficeClientTemplates
+      x-release: '1.1'
+      summary: Шаблоны клиента
+      description: Только просмотр.
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClientIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Шаблоны клиента
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/office/clients/{clientId}/autopayments:
+    get:
+      tags: [Операторский офис]
+      operationId: listOfficeClientAutopayments
+      x-release: '1.1'
+      summary: Автоплатежи клиента с запусками
+      description: Только просмотр. Для каждого автоплатежа приходит история запусков.
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClientIdPath'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/AttemptLabel'
+      responses:
+        '200':
+          description: Автоплатежи клиента
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficeAutopaymentList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
   /api/v1/office/operations:
     get:
       tags: [Операторский офис]
@@ -1030,6 +1475,20 @@ components:
         minimum: 0
     OperationIdPath:
       name: operationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TemplateIdPath:
+      name: templateId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AutopaymentIdPath:
+      name: autopaymentId
       in: path
       required: true
       schema:
@@ -1521,6 +1980,11 @@ components:
           $ref: '#/components/schemas/Recipient'
         comment:
           type: [string, 'null']
+        templateId:
+          type: [string, 'null']
+          format: uuid
+          x-release: '1.1'
+          description: Шаблон, по которому создана операция, `null` у обычных переводов
         rejection:
           anyOf:
             - $ref: '#/components/schemas/Rejection'
@@ -2080,6 +2544,279 @@ components:
           type: integer
         offset:
           type: integer
+    TemplateKind:
+      type: string
+      enum: [PHONE, OWN, SBP]
+      description: PHONE — клиенту ЗапускБанка по телефону, OWN — между своими счетами, SBP — в другой банк по телефону
+    Date:
+      type: string
+      pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      description: Дата без времени, московская, вида 2026-12-31
+    Template:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, fromAccount, toAccount, recipientPhone, recipientBankCode, recipientBankName, amount, comment, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 40
+        kind:
+          $ref: '#/components/schemas/TemplateKind'
+        fromAccount:
+          $ref: '#/components/schemas/AccountNumber'
+        toAccount:
+          type: [string, 'null']
+          description: Счёт зачисления, заполнен для вида `OWN`
+        recipientPhone:
+          type: [string, 'null']
+        recipientBankCode:
+          type: [string, 'null']
+        recipientBankName:
+          type: [string, 'null']
+        amount:
+          type: [integer, 'null']
+          description: Сумма в копейках или `null`, если сумма указывается при переводе
+        comment:
+          type: [string, 'null']
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    TemplateList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Template'
+    CreateTemplateRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      description: Либо `fromOperationId`, либо `kind`, `fromAccount` и данные получателя.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 40
+        fromOperationId:
+          type: string
+          format: uuid
+          description: Выполненная операция клиента, из которой берутся вид, счёт, получатель, сумма и сообщение
+        kind:
+          $ref: '#/components/schemas/TemplateKind'
+        fromAccount:
+          $ref: '#/components/schemas/AccountNumber'
+        toAccount:
+          $ref: '#/components/schemas/AccountNumber'
+        recipientPhone:
+          $ref: '#/components/schemas/Phone'
+        recipientBankCode:
+          type: string
+          pattern: '^[A-Z0-9_]{2,20}$'
+          description: Код банка получателя из справочника банков, нужен для вида `SBP`
+        amount:
+          type: integer
+          minimum: 1
+          maximum: 1000000000000
+          description: Сумма в копейках
+        comment:
+          type: string
+          maxLength: 140
+    UpdateTemplateRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 40
+        fromAccount:
+          $ref: '#/components/schemas/AccountNumber'
+        amount:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 1000000000000
+          description: Сумма в копейках, `null` убирает сумму
+        comment:
+          type: [string, 'null']
+          maxLength: 140
+    TemplateTransferRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+          maximum: 1000000000000
+          description: Сумма в копейках, заменяет сумму шаблона
+        comment:
+          type: string
+          maxLength: 140
+    AutopaymentStatus:
+      type: string
+      enum: [ACTIVE, PAUSED, FAILED, FINISHED]
+      description: ACTIVE — действует, PAUSED — на паузе, FAILED — остановлен после неудачи, FINISHED — отменён или закончился
+    Autopayment:
+      type: object
+      additionalProperties: false
+      required: [id, templateId, templateName, status, dayOfMonth, amount, endsOn, nextRunOn, attempt, failureReason, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        templateId:
+          type: string
+          format: uuid
+        templateName:
+          type: string
+        status:
+          $ref: '#/components/schemas/AutopaymentStatus'
+        dayOfMonth:
+          type: integer
+          minimum: 1
+          maximum: 28
+        amount:
+          type: integer
+          description: Сумма платежа в копейках
+        endsOn:
+          anyOf:
+            - $ref: '#/components/schemas/Date'
+            - type: 'null'
+          description: Последний день, когда платёж ещё исполняется
+        nextRunOn:
+          anyOf:
+            - $ref: '#/components/schemas/Date'
+            - type: 'null'
+          description: Дата ближайшей попытки, `null` у остановленного и завершённого
+        attempt:
+          type: integer
+          minimum: 0
+          maximum: 3
+          description: Сколько попыток текущего платежа уже сделано
+        failureReason:
+          type: [string, 'null']
+          description: Причина последней неудачи, например INSUFFICIENT_FUNDS
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    AutopaymentList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Autopayment'
+    CreateAutopaymentRequest:
+      type: object
+      additionalProperties: false
+      required: [templateId, dayOfMonth]
+      properties:
+        templateId:
+          type: string
+          format: uuid
+        dayOfMonth:
+          type: integer
+          minimum: 1
+          maximum: 28
+        amount:
+          type: integer
+          minimum: 1
+          maximum: 1000000000000
+          description: Сумма в копейках. Нужна, если её нет в шаблоне; заменяет сумму шаблона
+        endsOn:
+          $ref: '#/components/schemas/Date'
+    AutopaymentRunOutcome:
+      type: string
+      enum: [PENDING, EXECUTED, FAILED]
+      description: PENDING — операция ещё проверяется, EXECUTED — перевод выполнен, FAILED — перевод не выполнен
+    AutopaymentRun:
+      type: object
+      additionalProperties: false
+      required: [id, autopaymentId, runDate, cycleDate, attempt, outcome, operationId, operationNumber, reasonCode, amount, startedAt, finishedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        autopaymentId:
+          type: string
+          format: uuid
+        runDate:
+          $ref: '#/components/schemas/Date'
+          description: Дата попытки
+        cycleDate:
+          $ref: '#/components/schemas/Date'
+          description: Дата платежа, к которому относится попытка; у повторов она та же, что у первой попытки
+        attempt:
+          type: integer
+          minimum: 1
+          maximum: 3
+        outcome:
+          $ref: '#/components/schemas/AutopaymentRunOutcome'
+        operationId:
+          type: [string, 'null']
+          format: uuid
+          description: Операция перевода, пусто, если банк отказал до создания операции
+        operationNumber:
+          type: [string, 'null']
+        reasonCode:
+          type: [string, 'null']
+          description: Причина неудачи, например INSUFFICIENT_FUNDS, DAILY_LIMIT_EXCEEDED, ACCOUNT_ARRESTED, ANTIFRAUD_REJECTED, OPERATOR_REJECTED
+        amount:
+          type: integer
+        startedAt:
+          $ref: '#/components/schemas/Timestamp'
+        finishedAt:
+          type: [string, 'null']
+          format: date-time
+    AutopaymentRunList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutopaymentRun'
+    AutopaymentRunResult:
+      type: object
+      additionalProperties: false
+      required: [run, autopayment]
+      properties:
+        run:
+          $ref: '#/components/schemas/AutopaymentRun'
+        autopayment:
+          $ref: '#/components/schemas/Autopayment'
+    OfficeAutopayment:
+      type: object
+      additionalProperties: false
+      required: [autopayment, runs]
+      properties:
+        autopayment:
+          $ref: '#/components/schemas/Autopayment'
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/AutopaymentRun'
+    OfficeAutopaymentList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OfficeAutopayment'
     Health:
       type: object
       additionalProperties: false
@@ -2091,3 +2828,8 @@ components:
         database:
           type: string
           enum: [UP, DOWN]
+        release:
+          type: string
+          pattern: '^[0-9]+\.[0-9]+$'
+          description: Версия банка
+          example: '1.0'

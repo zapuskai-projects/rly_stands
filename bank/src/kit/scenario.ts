@@ -73,7 +73,11 @@ async function applyPersona(deps: KitScenarioDeps, db: Db, persona: PersonaPatch
 export async function applyScenario(deps: KitScenarioDeps, scenario: ScenarioInput): Promise<void> {
   await checkReferences(deps.pool, scenario);
   await withTransaction(deps.pool, async (tx) => {
-    await tx.query('UPDATE scenario SET label = $1, sbp_mode = $2, updated_at = now() WHERE id = 1', [scenario.label, SBP_MODE[scenario.sbpMode]]);
+    await tx.query('UPDATE scenario SET label = $1, sbp_mode = $2, release = $3, updated_at = now() WHERE id = 1', [
+      scenario.label,
+      SBP_MODE[scenario.sbpMode],
+      scenario.release,
+    ]);
     await saveActiveDefects(tx, scenario.defects);
     for (const patch of scenario.tariffs ?? []) await applyTariffPatch(tx, patch);
     for (const persona of scenario.personas ?? []) await applyPersona(deps, tx, persona);

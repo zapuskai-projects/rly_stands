@@ -12,6 +12,8 @@ import { publishPending, type EventTransport } from '../events/outbox.publisher'
 import type { StatusObservation } from '../events/status-observation';
 import type { OutboxRecord } from '../events/outbox.repository';
 import { configureTopics, getTopics } from '../events/topics';
+import { runAutopaymentCycle, type CycleReport } from '../autopayments/autopay-scheduler';
+import { databaseReleaseSource } from '../release/release-source';
 import { expireOverdueReviews } from '../review/review.service';
 import { dispatchPendingSbp, recoverStuckSbp } from '../sbp/dispatcher';
 import type { SbpAnswer, SbpGateway, SbpRequest } from '../sbp/gateway';
@@ -84,6 +86,7 @@ export interface Harness {
   kit(method: string, path: string, body?: unknown, secret?: string | null): Promise<ApiResponse>;
   drain(options?: DrainOptions): Promise<void>;
   expireReviews(): Promise<number>;
+  autopay(): Promise<CycleReport>;
   recoverSbp(timeoutMs: number): Promise<number>;
   deps: { pool: Pool; clock: BankClock };
   close(): Promise<void>;
@@ -184,6 +187,7 @@ export async function startHarness(databaseUrl: string, startTime: Date, options
       throw new Error('Очередь событий не опустела за 20 проходов');
     },
     expireReviews: () => expireOverdueReviews(deps),
+    autopay: () => runAutopaymentCycle({ ...deps, lookupRecipient: sbp.lookup }, databaseReleaseSource(pool)),
     recoverSbp: (timeoutMs) => recoverStuckSbp(deps, timeoutMs),
     deps,
     async close() {

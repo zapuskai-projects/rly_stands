@@ -35,3 +35,13 @@ export const NOTIFICATION_KIND_LABEL: Record<string, string> = {
   TRANSFER_COMPLETED: 'Перевод выполнен',
   TRANSFER_RECEIVED: 'Поступление',
 };
+
+export const AUTOPAYMENT_NOTIFICATION_KIND_LABEL: Record<string, string> = {
+  AUTOPAYMENT_REMINDER: 'Напоминание об автоплатеже',
+  AUTOPAYMENT_EXECUTED: 'Автоплатёж выполнен',
+  AUTOPAYMENT_FAILED: 'Автоплатёж не выполнен',
+};
+
+export function notificationKindLabels(withAutopayments: boolean): Record<string, string> {
+  return withAutopayments ? { ...NOTIFICATION_KIND_LABEL, ...AUTOPAYMENT_NOTIFICATION_KIND_LABEL } : NOTIFICATION_KIND_LABEL;
+}

@@ -26,6 +26,13 @@ describe('тело сценария банка', () => {
     assert.equal(parsed.tariffs, undefined);
   });
 
+  it('релиз без указания — 1.0, указанный принимается, неизвестный отвергается', () => {
+    assert.equal(parseKit(kitSchemas.scenario, BASE).release, '1.0');
+    assert.equal(parseKit(kitSchemas.scenario, { ...BASE, release: '1.1' }).release, '1.1');
+    assert.deepEqual(fields(failure(() => parseKit(kitSchemas.scenario, { ...BASE, release: '2.0' }))), ['release']);
+    assert.deepEqual(fields(failure(() => parseKit(kitSchemas.scenario, { ...BASE, release: 1.1 }))), ['release']);
+  });
+
   it('время банка со смещением и в UTC разбирается точно, без смещения считается московским', () => {
     assert.equal(parseKit(kitSchemas.scenario, { ...BASE, bankTime: '2026-10-20T23:40:00+03:00' }).bankTime?.toISOString(), '2026-10-20T20:40:00.000Z');
     assert.equal(parseKit(kitSchemas.scenario, { ...BASE, bankTime: '2026-10-20T20:40:00Z' }).bankTime?.toISOString(), '2026-10-20T20:40:00.000Z');

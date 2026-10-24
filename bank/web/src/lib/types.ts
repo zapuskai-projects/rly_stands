@@ -22,6 +22,7 @@ export interface Operation {
   fromAccount: { id: string; number: string };
   recipient: { accountNumber: string | null; phone: string | null; bankCode: string | null; bankName: string | null; displayName: string | null };
   comment: string | null;
+  templateId?: string | null;
   rejection: { code: string; message: string } | null;
   createdAt: string;
   updatedAt: string;
@@ -252,4 +253,59 @@ export interface DocumentIndex {
 
 export interface BankDocument extends DocumentMeta {
   markdown: string;
+}
+
+export type TemplateKind = 'PHONE' | 'OWN' | 'SBP';
+
+export interface Template {
+  id: string;
+  name: string;
+  kind: TemplateKind;
+  fromAccount: string;
+  toAccount: string | null;
+  recipientPhone: string | null;
+  recipientBankCode: string | null;
+  recipientBankName: string | null;
+  amount: number | null;
+  comment: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AutopaymentStatus = 'ACTIVE' | 'PAUSED' | 'FAILED' | 'FINISHED';
+export type RunOutcome = 'PENDING' | 'EXECUTED' | 'FAILED';
+
+export interface Autopayment {
+  id: string;
+  templateId: string;
+  templateName: string;
+  status: AutopaymentStatus;
+  dayOfMonth: number;
+  amount: number;
+  endsOn: string | null;
+  nextRunOn: string | null;
+  attempt: number;
+  failureReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutopaymentRun {
+  id: string;
+  autopaymentId: string;
+  runDate: string;
+  cycleDate: string;
+  attempt: number;
+  outcome: RunOutcome;
+  operationId: string | null;
+  operationNumber: string | null;
+  reasonCode: string | null;
+  amount: number;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface OfficeAutopayment {
+  autopayment: Autopayment;
+  runs: AutopaymentRun[];
 }

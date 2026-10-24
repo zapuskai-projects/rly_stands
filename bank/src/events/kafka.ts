@@ -24,11 +24,14 @@ export async function ensureTopics(kafka: Kafka, topics: string[]): Promise<void
 export class KafkaTransport implements EventTransport {
   private producer: Producer | null = null;
   private ready: Promise<Producer> | null = null;
+  private readonly ensured: Set<string>;
 
   constructor(
     private readonly kafka: Kafka,
     private readonly topics: string[],
-  ) {}
+  ) {
+    this.ensured = new Set(topics);
+  }
 
   private connect(): Promise<Producer> {
     if (!this.ready) {
@@ -59,6 +62,10 @@ export class KafkaTransport implements EventTransport {
   async send(record: OutboxRecord): Promise<void> {
     const producer = await this.connect();
     try {
+      if (!this.ensured.has(record.topic)) {
+        await ensureTopics(this.kafka, [record.topic]);
+        this.ensured.add(record.topic);
+      }
       await producer.send({
         topic: record.topic,
         acks: -1,

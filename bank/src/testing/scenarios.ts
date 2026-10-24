@@ -15,6 +15,14 @@ export const NEW_OPERATIONS = "SELECT 1 FROM operations WHERE request_id <> 'see
 export const NOON_MOSCOW = new Date('2026-10-20T09:00:00Z');
 export const NIGHT_MOSCOW = new Date('2026-10-20T20:40:00Z');
 
+export async function useRelease(h: Harness, release: '1.0' | '1.1' | '1.2'): Promise<void> {
+  await h.pool.query('UPDATE scenario SET release = $1 WHERE id = 1', [release]);
+}
+
+export function moscow(value: string): Date {
+  return new Date(`${value}+03:00`);
+}
+
 export interface AccountView {
   id: string;
   number: string;

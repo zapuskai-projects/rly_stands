@@ -8,6 +8,9 @@ import { retryOnConflict } from '../shared/retry';
 import { restoreDefaultTariffs } from './tariffs';
 
 const CLIENT_DATA_TABLES = [
+  'autopayment_run_marks',
+  'autopayment_runs',
+  'autopayments',
   'defect_marks',
   'operation_status_history',
   'postings',
@@ -24,6 +27,7 @@ const CLIENT_DATA_TABLES = [
   'client_limits',
   'cards',
   'operations',
+  'transfer_templates',
   'accounts',
   'clients',
   'operator_sessions',

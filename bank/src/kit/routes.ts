@@ -6,6 +6,8 @@ import type { RequestJournal } from '../api/request-context';
 import type { RecipientNameLookup } from '../sbp/gateway';
 import { notFound } from '../shared/errors';
 import { runReview, runSetTariff, runTransfer } from './actions';
+import { databaseReleaseSource, type ReleaseSource } from '../release/release-source';
+import { listAutopayFacts, runKitAutopay } from './autopay';
 import { createCheckClient } from './check-client';
 import { findLedgerFact, findOperationFact, listInconsistentAccounts, listOperationFacts, listRequestFacts } from './facts';
 import { resetBank } from './reset';
@@ -51,8 +53,13 @@ function normalizePhoneQuery(query: Request['query']): Record<string, unknown> {
   return { ...query, ...(phone === undefined ? {} : { phone: phone.startsWith('+') ? phone : `+${phone}` }) };
 }
 
+async function requireTemplatesRelease(releases: ReleaseSource, req: Request): Promise<void> {
+  if (!(await releases.atLeast('1.1'))) throw notFoundError(req);
+}
+
 export function mountKit(app: Express, deps: KitDeps): void {
   if (!deps.secret) return;
+  const releases = databaseReleaseSource(deps.pool);
   const router = Router();
   router.use(gate(deps.secret));
   router.use(express.json({ limit: '256kb' }));
@@ -91,6 +98,21 @@ export function mountKit(app: Express, deps: KitDeps): void {
     const input = parseKit(kitSchemas.reviewAction, req.body);
     res.locals.operationId = input.operationId;
     res.json(await runReview(deps, input, String(res.locals.requestId)));
+  });
+
+  router.post('/actions/autopay-run', async (req, res) => {
+    await requireTemplatesRelease(releases, req);
+    const input = parseKit(kitSchemas.autopayRunAction, req.body);
+    res.locals.attemptLabel = input.label;
+    const result = await runKitAutopay(deps, input.autopaymentId, input.label, String(res.locals.requestId));
+    res.locals.clientId = result.clientId;
+    if (result.operationId) res.locals.operationId = result.operationId;
+    res.json(result.body);
+  });
+
+  router.get('/facts/autopayments', async (req, res) => {
+    await requireTemplatesRelease(releases, req);
+    res.json(await listAutopayFacts(deps.pool, parseKit(kitSchemas.autopaymentsQuery, normalizePhoneQuery(req.query))));
   });
 
   router.get('/facts/operations', async (req, res) => {

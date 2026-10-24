@@ -44,6 +44,33 @@ describe('факты диаграмм', () => {
     assert.equal(extra.participants.length, 4);
   });
 
+  it('диаграмма последовательности: тексты участников, цели по порядку и ветки alt/else для поиска по смыслу', () => {
+    const facts = sequenceFacts([
+      '@startuml',
+      'participant "Планировщик автоплатежей" as sched',
+      'participant "Сервис переводов" as pay',
+      'queue Kafka',
+      'sched -> pay: сделать перевод по шаблону',
+      'alt перевод прошёл',
+      'pay ->> Kafka: событие исполнено',
+      'else не хватает денег',
+      'pay --> sched: INSUFFICIENT_FUNDS',
+      'end',
+      '@enduml',
+    ].join('\n'));
+    assert.match(facts.participantsText, /Планировщик автоплатежей sched/);
+    assert.match(facts.messages[0]?.fromText ?? '', /Планировщик/);
+    assert.equal(facts.targetsText, 'Сервис переводов pay\nKafka\nПланировщик автоплатежей sched');
+    const alt = facts.blocks[0];
+    assert.equal(alt?.hasElse, true);
+    assert.match(alt?.text ?? '', /не хватает денег/);
+    assert.match(alt?.text ?? '', /INSUFFICIENT_FUNDS/);
+    assert.match(facts.text, /сделать перевод/);
+    const plain = sequenceFacts('@startuml\nA -> B: x\n@enduml');
+    assert.equal(plain.blocks.length, 0);
+    assert.equal(plain.targetsText, 'B');
+  });
+
   it('классы и C4 несут заголовок и свои элементы', () => {
     const classes = classFacts('@startuml\ntitle k3x9ab Модель\nclass Document {\n  +id: UUID\n}\nDocument \"1\" *-- \"0..*\" Approval\n@enduml');
     assert.equal(classes.title, 'k3x9ab Модель');

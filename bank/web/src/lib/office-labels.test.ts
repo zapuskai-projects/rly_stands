@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { channelLabel, recipientLabel, reviewSummary } from './office-labels';
+import { channelLabel, notificationKindLabels, recipientLabel, reviewSummary } from './office-labels';
 
 describe('подписи офиса', () => {
   it('получатель: имя, банк для чужих банков, телефон без имени', () => {
@@ -20,5 +20,12 @@ describe('подписи офиса', () => {
     assert.equal(channelLabel({ type: 'PHONE_TRANSFER', route: 'SBP' }), 'по номеру телефона через СБП');
     assert.equal(channelLabel({ type: 'PHONE_TRANSFER', route: 'INTERNAL' }), 'по номеру телефона');
     assert.equal(channelLabel({ type: 'OWN_TRANSFER', route: 'INTERNAL' }), 'между своими счетами');
+  });
+
+  it('виды уведомлений об автоплатежах появляются только с релиза 1.1', () => {
+    assert.equal('AUTOPAYMENT_FAILED' in notificationKindLabels(false), false);
+    assert.equal(Object.keys(notificationKindLabels(false)).length, 3);
+    assert.equal(notificationKindLabels(true).AUTOPAYMENT_FAILED, 'Автоплатёж не выполнен');
+    assert.equal(notificationKindLabels(true).TRANSFER_COMPLETED, 'Перевод выполнен');
   });
 });

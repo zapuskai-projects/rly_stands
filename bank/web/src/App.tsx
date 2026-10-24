@@ -1,13 +1,17 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { AutopaymentsPage } from './bank/AutopaymentsPage';
 import { BankLayout } from './bank/BankLayout';
 import { HistoryPage } from './bank/HistoryPage';
 import { HomePage } from './bank/HomePage';
 import { LoginPage } from './bank/LoginPage';
 import { OperationPage } from './bank/OperationPage';
 import { StatementPage } from './bank/StatementPage';
+import { TemplateEditPage } from './bank/TemplateEditPage';
+import { TemplateTransferPage } from './bank/TemplateTransferPage';
 import { TransferPage } from './bank/TransferPage';
 import { Loading } from './components/States';
+import { ReleaseGate } from './components/ReleaseGate';
 import { getToken, onUnauthorized, type Realm } from './lib/api';
 import { ClientPage } from './office/ClientPage';
 import { ClientsPage } from './office/ClientsPage';
@@ -44,6 +48,9 @@ export function App() {
         <Route path="/operations/:id" element={<OperationPage />} />
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/statement" element={<StatementPage />} />
+        <Route path="/templates/:id/transfer" element={<ReleaseGate required="1.1"><TemplateTransferPage /></ReleaseGate>} />
+        <Route path="/templates/:id/edit" element={<ReleaseGate required="1.1"><TemplateEditPage /></ReleaseGate>} />
+        <Route path="/autopayments" element={<ReleaseGate required="1.1"><AutopaymentsPage /></ReleaseGate>} />
       </Route>
       <Route path="/office/login" element={<OfficeLogin />} />
       <Route path="/office" element={<Guard realm="office"><OfficeLayout /></Guard>}>

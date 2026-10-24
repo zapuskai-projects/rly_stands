@@ -5,11 +5,11 @@ import { insertNotification } from './notifications.repository';
 
 const messageSchema = z.object({
   messageId: z.string().uuid(),
-  operationId: z.string().uuid(),
+  operationId: z.string().uuid().nullable(),
   clientId: z.string().uuid(),
   phone: z.string().regex(/^\+79[0-9]{9}$/),
   channel: z.enum(['SMS', 'PUSH']),
-  kind: z.enum(['TRANSFER_COMPLETED', 'TRANSFER_RECEIVED']),
+  kind: z.enum(['TRANSFER_COMPLETED', 'TRANSFER_RECEIVED', 'AUTOPAYMENT_REMINDER', 'AUTOPAYMENT_EXECUTED', 'AUTOPAYMENT_FAILED']),
   text: z.string().min(1).max(1000),
   createdAt: z.string(),
 });
