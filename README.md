@@ -76,7 +76,7 @@
 | Kafka | брокер `localhost:19092`, AKHQ http://localhost:18080 | без входа |
 | Camunda (Operaton) | http://localhost:18090 | `demo` / `demo` |
 | Elasticsearch | http://localhost:9200, Kibana http://localhost:5601 | без входа |
-| PostgreSQL | `localhost:15432`, база `student` | `student` / `student` |
+| PostgreSQL | `localhost:15432`, база `student`; база банка — `bank` | `student` / `student` |
 | Контракты и диаграммы | PlantUML http://localhost:18100, Prism http://localhost:18110 | без входа |
 | ClickHouse | http://localhost:18123 (`/play`), native `localhost:19000`, база `student` | `student` / `student` |
 | Prometheus и Grafana | Prometheus http://localhost:19090, Grafana http://localhost:13000, учебное приложение http://localhost:18200 | Grafana: `admin` / `admin` |

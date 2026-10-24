@@ -281,3 +281,68 @@ liveSuite('contracts', (READINESS.contracts ?? []).slice(0, 1), 'Контрак�
     assert.equal(bad.parsed, false);
   });
 });
+
+const ER_DIAGRAM = `@startuml
+title Модель данных
+entity "clients" as clients {
+  * id : uuid <<PK>>
+  --
+  full_name : text
+}
+entity "accounts" as accounts {
+  * id : uuid <<PK>>
+  * client_id : uuid <<FK>>
+  balance_kop : numeric(19,2)
+}
+entity "postings" as postings {
+  * id : bigint <<PK>>
+  * debit_account_id : uuid <<FK>>
+  * credit_account_id : uuid <<FK>>
+}
+accounts }o--|| clients
+postings }o--|| accounts : debit
+@enduml
+`;
+
+const JUNIT_REPORT = `<?xml version="1.0" encoding="utf-8"?>
+<testsuites><testsuite name="pytest" tests="4" failures="1">
+<testcase classname="tests.test_limit" name="test_daily_limit[a]"/>
+<testcase classname="tests.test_limit" name="test_daily_limit[b]"/>
+<testcase classname="tests.test_limit" name="test_daily_limit[c]"><failure message="assert 1 == 2">trace</failure></testcase>
+<testcase classname="tests.test_login" name="test_login"/>
+</testsuite></testsuites>`;
+
+liveSuite('contracts', (READINESS.contracts ?? []).slice(0, 1), 'Контракты: ER-диаграмма и отчёты JUnit', ({ probe, write }) => {
+  it('ER-диаграмма: сущности, ключи, связи с кратностью и пары проходят настоящий сервер PlantUML', async () => {
+    write('er.puml', ER_DIAGRAM);
+    const facts = await probe<Facts>('plantuml.class', { file: 'er.puml' });
+    assert.deepEqual(facts.syntaxErrors, []);
+    assert.deepEqual(facts.classes.map((item: Facts) => [item.name, item.kind]), [
+      ['clients', 'entity'],
+      ['accounts', 'entity'],
+      ['postings', 'entity'],
+    ]);
+    const accounts = facts.classes.find((item: Facts) => item.name === 'accounts');
+    assert.deepEqual(accounts.attributes.filter((item: Facts) => item.fk).map((item: Facts) => item.name), ['client_id']);
+    assert.equal(accounts.attributes.find((item: Facts) => item.name === 'balance_kop').type, 'numeric(19,2)');
+    assert.deepEqual(facts.linkPairs, ['accounts--clients', 'accounts--postings']);
+    assert.equal(facts.relations[1].fromMultiplicity, '0..*');
+    assert.equal(facts.relations[1].toMultiplicity, '1');
+    write('er-broken.puml', '@startuml\nentity a {\n* id\n@enduml');
+    assert.notDeepEqual((await probe<Facts>('plantuml.class', { file: 'er-broken.puml' })).syntaxErrors, []);
+  });
+
+  it('отчёты JUnit из вложенных папок: счётчики, упавший, группа параметризованного теста; чужие файлы не мешают', async () => {
+    write('reports/nested/pytest.xml', JUNIT_REPORT);
+    write('reports/notes.txt', 'не отчёт');
+    write('reports/broken.xml', '<testsuite><testcase');
+    const facts = await probe<Facts>('junit.report', {});
+    assert.equal(facts.exists, true);
+    assert.deepEqual(facts.files, ['nested/pytest.xml']);
+    assert.equal(facts.parseErrors.length, 1);
+    assert.deepEqual([facts.tests, facts.passed, facts.failed, facts.skipped], [4, 3, 1, 0]);
+    assert.equal(facts.maxGroupSize, 3);
+    assert.ok(facts.failedNames.includes('test_daily_limit[c]'));
+    assert.deepEqual((await probe<Facts>('junit.report', { dir: 'absent' })).exists, false);
+  });
+});

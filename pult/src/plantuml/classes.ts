@@ -1,9 +1,16 @@
 import { sourceLines, unquote } from './common';
 
-export type ClassKind = 'class' | 'interface' | 'abstract' | 'enum';
+export type ClassKind = 'class' | 'interface' | 'abstract' | 'enum' | 'entity';
 export type Visibility = '+' | '-' | '#' | '~' | null;
 
-export type ClassAttribute = { name: string; type: string | null; visibility: Visibility };
+export type ClassAttribute = {
+  name: string;
+  type: string | null;
+  visibility: Visibility;
+  pk?: boolean;
+  fk?: boolean;
+  mandatory?: boolean;
+};
 
 export type ClassModel = {
   name: string;
@@ -39,7 +46,7 @@ export type ClassDiagram = {
 
 const NAME = '[\\p{L}\\p{N}_.]+';
 const DECLARATION = new RegExp(
-  `^(abstract\\s+class|abstract|class|interface|enum)\\s+("[^"]+"|${NAME})(?:\\s+as\\s+(${NAME}))?[^{]*(\\{)?\\s*(\\})?$`,
+  `^(abstract\\s+class|abstract|class|interface|enum|entity)\\s+("[^"]+"|${NAME})(?:\\s+as\\s+(${NAME}))?[^{]*(\\{)?\\s*(\\})?$`,
   'iu',
 );
 const MEMBER_LINE = new RegExp(`^(${NAME})\\s*:\\s*(.+)$`, 'u');
@@ -47,6 +54,43 @@ const RELATION = new RegExp(
   `^(${NAME})\\s*(?:"([^"]*)")?\\s*(<\\|--|--\\|>|<\\|\\.\\.|\\.\\.\\|>|\\*--|--\\*|o--|--o|<--|-->|<\\.\\.|\\.\\.>|--|\\.\\.)\\s*(?:"([^"]*)")?\\s*(${NAME})\\s*(?::\\s*(.*))?$`,
   'u',
 );
+
+const ER_LEFT: Record<string, string> = { '||': '1', '|o': '0..1', '}o': '0..*', '}|': '1..*' };
+const ER_RIGHT: Record<string, string> = { '||': '1', 'o|': '0..1', 'o{': '0..*', '|{': '1..*' };
+const ER_RELATION = new RegExp(
+  `^(${NAME})\\s*(\\|\\||\\|o|\\}o|\\}\\|)(--|\\.\\.)(\\|\\||o\\||o\\{|\\|\\{)\\s*(${NAME})\\s*(?::\\s*(.*))?$`,
+  'u',
+);
+const STEREOTYPE = /<<([^>]*)>>/g;
+
+function parseEntityField(text: string): ClassAttribute {
+  let body = text.trim();
+  const mandatory = body.startsWith('*');
+  if (mandatory) body = body.slice(1).trim();
+  const stereotypes = [...body.matchAll(STEREOTYPE)].map((match) => match[1] ?? '').join(' ');
+  body = body.replace(STEREOTYPE, '').trim();
+  const visibilityMatch = /^([+\-#~])\s*/.exec(body);
+  const visibility = (visibilityMatch?.[1] ?? null) as Visibility;
+  if (visibilityMatch) body = body.slice(visibilityMatch[0].length);
+  const colon = body.indexOf(':');
+  const [name, type] =
+    colon >= 0
+      ? [body.slice(0, colon).trim(), body.slice(colon + 1).trim()]
+      : [body.split(/\s+/)[0] ?? '', body.split(/\s+/).slice(1).join(' ')];
+  return {
+    name,
+    type: type || null,
+    visibility,
+    pk: /\bPK\b/i.test(stereotypes),
+    fk: /\bFK\b/i.test(stereotypes),
+    mandatory,
+  };
+}
+
+function markIdentifying(model: ClassModel, identifyingCount: number): void {
+  if (model.kind !== 'entity' || identifyingCount === 0 || model.attributes.some((attribute) => attribute.pk)) return;
+  for (const attribute of model.attributes.slice(0, identifyingCount)) attribute.pk = true;
+}
 
 function kindOf(word: string): ClassKind {
   const lower = word.toLowerCase();
@@ -122,6 +166,7 @@ export function parseClasses(source: string): ClassDiagram {
   const relations: ClassRelation[] = [];
   const errors: string[] = [];
   let current: ClassModel | null = null;
+  let identifying = 0;
 
   const ensure = (raw: string): ClassModel => {
     const name = aliases.get(unquote(raw)) ?? unquote(raw);
@@ -136,6 +181,7 @@ export function parseClasses(source: string): ClassDiagram {
   for (const row of sourceLines(source)) {
     if (current) {
       if (row === '}') {
+        markIdentifying(current, identifying);
         current = null;
         continue;
       }
@@ -143,7 +189,14 @@ export function parseClasses(source: string): ClassDiagram {
         current.values.push(row);
         continue;
       }
-      if (row === '--' || row === '==' || row === '..') continue;
+      if (row === '--' || row === '==' || row === '..') {
+        if (identifying === 0) identifying = current.attributes.length;
+        continue;
+      }
+      if (current.kind === 'entity') {
+        current.attributes.push(parseEntityField(row));
+        continue;
+      }
       const member = parseMember(row);
       if (member.attribute) current.attributes.push(member.attribute);
       if (member.method) current.methods.push(member.method);
@@ -173,7 +226,23 @@ export function parseClasses(source: string): ClassDiagram {
           });
         }
       }
-      if (declaration[4] && !declaration[5]) current = model;
+      if (declaration[4] && !declaration[5]) {
+        current = model;
+        identifying = 0;
+      }
+      continue;
+    }
+    const entityRelation = ER_RELATION.exec(row);
+    if (entityRelation) {
+      relations.push({
+        from: ensure(entityRelation[1] as string).name,
+        to: ensure(entityRelation[5] as string).name,
+        kind: 'association',
+        directed: false,
+        fromMultiplicity: ER_LEFT[entityRelation[2] as string] ?? null,
+        toMultiplicity: ER_RIGHT[entityRelation[4] as string] ?? null,
+        label: entityRelation[6]?.trim() || null,
+      });
       continue;
     }
     const relation = RELATION.exec(row);

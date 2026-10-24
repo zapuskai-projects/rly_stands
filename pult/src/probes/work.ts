@@ -45,8 +45,13 @@ export function missingFile(relative: string): string {
 
 const SKIPPED_DIRS = new Set(['node_modules']);
 const MAX_LISTED_FILES = 200;
+export const MAX_LISTED_REPORTS = MAX_LISTED_FILES;
 
-export function listWorkFiles(ctx: ProbeContext, relative: string): { exists: boolean; count: number; files: string[] } {
+export function listWorkFiles(
+  ctx: ProbeContext,
+  relative: string,
+  accept: (path: string) => boolean = () => true,
+): { exists: boolean; count: number; files: string[] } {
   const root = workPath(ctx, relative);
   try {
     if (!statSync(root).isDirectory()) return { exists: false, count: 0, files: [] };
@@ -60,7 +65,7 @@ export function listWorkFiles(ctx: ProbeContext, relative: string): { exists: bo
       const path = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         if (!SKIPPED_DIRS.has(entry.name)) visit(join(directory, entry.name), path);
-      } else if (entry.isFile()) {
+      } else if (entry.isFile() && accept(path)) {
         found.push(path);
       }
     }

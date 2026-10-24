@@ -8,9 +8,9 @@ export const PLATFORM_EXECUTORS: ExecutorTable = {
     return { saved: true };
   }),
 
-  'platform.answer': executor<{ answer: string }>(async ({ answer }, ctx) => {
+  'platform.answer': executor<Record<string, string>>(async (params, ctx) => {
     if (!ctx.saveReport) throw new ProbeError('Ответ можно записать только внутри попытки задачи');
-    await ctx.saveReport({ answer });
+    await ctx.saveReport(params);
     return { saved: true };
   }),
 };

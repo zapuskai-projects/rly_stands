@@ -5,7 +5,10 @@ import { accountOf, NIGHT_MOSCOW, NOON_MOSCOW, PHONES, phoneTransfer, sendTransf
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const { PETR, ANNA, IP, GALINA } = PHONES;
-const OPERATION_KEYS = ['ageSeconds', 'amountKop', 'clientPhone', 'createdAt', 'feeKop', 'hasKopecks', 'id', 'number', 'reasonCode', 'route', 'status', 'statusHistory', 'type'];
+const OPERATION_KEYS = [
+  'ageSeconds', 'amountKop', 'antifraudScore', 'clientPhone', 'clientRemainingKop', 'clientRemainingRub', 'createdAt', 'createdWhileOtherOnReview', 'defectCodes', 'feeKop', 'hasKopecks', 'id',
+  'limitAfterKop', 'limitBeforeKop', 'limitBeforeRub', 'limitMarginKop', 'number', 'reasonCode', 'recipientPhone', 'route', 'status', 'statusHistory', 'type', 'wasOnReview',
+];
 
 describe('служебный API банка: действия и факты', { skip: DATABASE_URL ? false : 'нужна TEST_DATABASE_URL' }, () => {
   let h: Harness;
@@ -113,6 +116,9 @@ describe('служебный API банка: действия и факты', { 
       assert.equal(typeof byStudent[0]?.ageSeconds, 'number');
       assert.ok((byStudent[0]?.ageSeconds as number) >= 0);
       assert.equal(byStudent[0]?.clientPhone, PETR);
+      assert.equal(byStudent[0]?.recipientPhone, ANNA);
+      assert.equal(byStudent[0]?.antifraudScore, null);
+      assert.deepEqual(byStudent[0]?.defectCodes, []);
       assert.equal(byStudent[0]?.createdAt, '2026-10-20T12:00:00.000+03:00');
       assert.deepEqual((byStudent[0]?.statusHistory as { status: string }[]).map((step) => step.status), ['CREATED', 'CHECKING', 'REJECTED']);
       assert.deepEqual(Object.keys((byStudent[0]?.statusHistory as object[])[0] as object).sort(), ['at', 'reasonCode', 'status']);
@@ -153,6 +159,9 @@ describe('служебный API банка: действия и факты', { 
       assert.equal(early.status, 'PROCESSING');
       assert.deepEqual((early.defects as { code: string }[]).map((item) => item.code), ['notify-before-complete']);
       assert.deepEqual(early.postings, []);
+      const listed = ((await facts('operations?label=ref%3A4')) as { antifraudScore: number | null; defectCodes: string[] }[])[0];
+      assert.equal(typeof listed?.antifraudScore, 'number');
+      assert.deepEqual(listed?.defectCodes, ['notify-before-complete']);
       assert.deepEqual((early.notifications as { channel: string; beforeCompletion: boolean }[]).map((item) => [item.channel, item.beforeCompletion]).sort(), [['PUSH', true], ['SMS', true]]);
       h.setTime(new Date(NOON_MOSCOW.getTime() + 3000));
       await h.drain();
@@ -230,10 +239,61 @@ describe('служебный API банка: действия и факты', { 
         ],
       );
       assert.ok(rows.every((row) => row.status === row.responseStatus));
-      assert.deepEqual(Object.keys(rows[0] as object).sort(), ['at', 'errorCode', 'idempotencyKey', 'method', 'operationId', 'path', 'replayed', 'responseStatus', 'status']);
+      assert.deepEqual(Object.keys(rows[0] as object).sort(), ['at', 'errorCode', 'idempotencyKey', 'method', 'operationId', 'operationTerminalAt', 'path', 'replayed', 'responseStatus', 'status']);
       assert.equal(rows[0]?.at, '2026-10-20T12:00:00.000+03:00');
       assert.equal((await h.kit('GET', '/_kit/facts/requests')).status, 400);
       assert.deepEqual(await facts('requests?label=nobody'), []);
+    });
+
+    it('опрос операции: запрос видит время конечного статуса операции, у операции в работе его нет', async () => {
+      const petr = await h.login(PETR);
+      const from = await accountOf(h, petr);
+      const label = { 'X-Attempt-Label': 'student:poll' };
+      const created = await sendTransfer(h, petr, 'kit-fct-0020', phoneTransfer(from.number, ANNA, 100_000), label);
+      const id = String(pick(created.body, 'id'));
+      await h.api(petr, 'GET', `/api/v1/operations/${id}`, undefined, label);
+      await h.drain();
+      await h.api(petr, 'GET', `/api/v1/operations/${id}`, undefined, label);
+      const rows = (await facts('requests?label=student%3Apoll')) as Record<string, unknown>[];
+      assert.deepEqual(rows.map((row) => row.method), ['POST', 'GET', 'GET']);
+      assert.ok(rows.every((row) => typeof row.operationTerminalAt === 'string'));
+      const finished = (await facts(`operations/${id}`)) as { statusHistory: { status: string; at: string }[] };
+      assert.equal(rows[2]?.operationTerminalAt, finished.statusHistory.at(-1)?.at);
+    });
+
+    it('перевод на проверке держит лимит: следующий отклонён, пока первый ждёт; остаток до и после, запас и флаги операции', async () => {
+      h.setTime(NIGHT_MOSCOW);
+      const first = await transfer({ phone: ANNA, toPhone: PETR, amountKop: 1_500_000, idempotencyKey: 'kit-act-0101', label: 'trace:1' });
+      await h.drain();
+      const second = await transfer({ phone: ANNA, toPhone: PETR, amountKop: 14_000_000, idempotencyKey: 'kit-act-0102', label: 'trace:1' });
+      await h.drain();
+      const byNumber = async (response: ApiResponse) => (await facts(`operations/${String(pick(response.body, 'number'))}`)) as Record<string, unknown>;
+      const one = await byNumber(first);
+      const two = await byNumber(second);
+      assert.deepEqual(
+        [one.status, one.wasOnReview, one.createdWhileOtherOnReview, one.limitBeforeKop, one.limitAfterKop, one.limitMarginKop, one.limitBeforeRub],
+        ['ON_REVIEW', true, false, 15_000_000, 13_500_000, 13_500_000, 150_000],
+      );
+      assert.deepEqual(
+        [two.status, two.reasonCode, two.wasOnReview, two.createdWhileOtherOnReview, two.limitBeforeKop, two.limitAfterKop, two.limitMarginKop, two.limitBeforeRub],
+        ['REJECTED', 'DAILY_LIMIT_EXCEEDED', false, true, 13_500_000, 13_500_000, -500_000, 135_000],
+      );
+      assert.deepEqual([one.clientRemainingKop, two.clientRemainingKop, two.clientRemainingRub], [13_500_000, 13_500_000, 135_000]);
+    });
+
+    it('граничные суммы: перевод ровно на остаток оставляет ноль, у перевода не по телефону лимита нет', async () => {
+      const exact = await transfer({ phone: GALINA, toPhone: PETR, amountKop: 5_000_000, idempotencyKey: 'kit-act-0103', label: 'trace:2' });
+      await h.drain();
+      const fact = (await facts(`operations/${String(pick(exact.body, 'number'))}`)) as Record<string, unknown>;
+      assert.deepEqual([fact.status, fact.limitBeforeKop, fact.limitAfterKop, fact.limitMarginKop], ['COMPLETED', 5_000_000, 0, 0]);
+      assert.equal(fact.clientRemainingKop, 0);
+      const petr = await h.login(PETR);
+      const savings = (await h.api(petr, 'GET', '/api/v1/accounts')).body as { items: { number: string; kind: string }[] };
+      const target = savings.items.find((item) => item.kind !== 'CURRENT');
+      if (!target) return;
+      const own = await transfer({ toPhone: undefined, toOwnAccount: target.number, amountKop: 5_000, idempotencyKey: 'kit-act-0104', label: 'trace:2' });
+      const ownFact = (await facts(`operations/${String(pick(own.body, 'number'))}`)) as Record<string, unknown>;
+      assert.deepEqual([ownFact.limitBeforeKop, ownFact.limitAfterKop, ownFact.limitMarginKop, ownFact.limitBeforeRub], [null, null, null, null]);
     });
 
     it('действия перевода пишут в журнал отказ, повтор и ошибку так же, как публичный API', async () => {

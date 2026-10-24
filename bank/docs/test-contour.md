@@ -17,6 +17,9 @@ updated: 2026-10-20
 | Swagger UI | http://localhost:18400/api/docs |
 | Контракт API | http://localhost:18400/api/openapi.yaml |
 | События | http://localhost:18400/api/asyncapi.yaml |
+| База банка (PostgreSQL) | `localhost:15432`, база `bank`, логин и пароль `student` / `student` |
+| Kafka | брокер `localhost:19092`, панель AKHQ http://localhost:18080 |
+| RabbitMQ | панель http://localhost:15672, логин и пароль `guest` / `guest` |
 
 ## Клиенты
 
@@ -57,4 +60,4 @@ updated: 2026-10-20
 
 ## Журнал запросов
 
-Банк записывает каждый запрос к `/api/v1`: метод, путь, статус, `Idempotency-Key` и метку из заголовка `X-Attempt-Label`. Номер запроса приходит в заголовке ответа `X-Request-Id`; его же можно передать самому в заголовке запроса.
+Банк записывает каждый запрос к `/api/v1`: метод, путь, статус и `Idempotency-Key`. Номер запроса приходит в заголовке ответа `X-Request-Id`; его же можно передать самому в заголовке запроса.

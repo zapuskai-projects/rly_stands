@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ProbeError } from './errors';
 import { asArray, asRecord, failure, http, num, str } from './http';
 import { executor, sleep, type ExecutorTable } from './types';
 
@@ -8,9 +9,24 @@ const AUTH = 'guest:guest';
 const VHOST = '%2F';
 const DEFAULT_WAIT_MS = 1000;
 const PEEK_COUNT = 500;
+const DEFAULT_MESSAGE_LIMIT = 50;
+const MESSAGE_TRUNCATE = 20_000;
 
 const call = (path: string, options: Parameters<typeof http>[2] = {}) =>
   http(MODULE, `${BASE}${path}`, { basic: AUTH, ...options });
+
+const BANK_QUEUE_PREFIX = 'bank.';
+const PURGEABLE_BANK_QUEUES: readonly string[] = ['bank.notifications.dlq'];
+
+export function assertDeletableQueues(names: string[]): void {
+  const bank = names.filter((name) => name.startsWith(BANK_QUEUE_PREFIX));
+  if (bank.length) throw new ProbeError(`Очереди банка удалять нельзя: ${bank.join(', ')}`);
+}
+
+export function assertPurgeableQueues(names: string[]): void {
+  const denied = names.filter((name) => name.startsWith(BANK_QUEUE_PREFIX) && !PURGEABLE_BANK_QUEUES.includes(name));
+  if (denied.length) throw new ProbeError(`Очереди банка очищать нельзя: ${denied.join(', ')}`);
+}
 
 const exchangeId = (name: string) => encodeURIComponent(name === '' ? 'amq.default' : name);
 
@@ -40,6 +56,52 @@ export function readOrderFacts(sent: Array<{ id: string; marker: string }>, retu
   const idByMarker = new Map(sent.map((item) => [item.marker, item.id]));
   const readOrder = returned.flatMap((marker) => idByMarker.get(marker) ?? []);
   return { readOrder, missing: sent.map((item) => item.id).filter((id) => !readOrder.includes(id)) };
+}
+
+export type QueueMessage = {
+  routingKey: string;
+  redelivered: boolean;
+  headers: Record<string, unknown>;
+  body: string;
+  json: unknown;
+  isObject: boolean;
+};
+
+function parseBody(body: string): unknown {
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
+
+export function describeQueueMessage(raw: unknown): QueueMessage {
+  const row = asRecord(raw);
+  const encoded = str(row.payload_encoding) === 'base64';
+  const payload = str(row.payload);
+  const body = encoded ? Buffer.from(payload, 'base64').toString('utf8') : payload;
+  const json = parseBody(body);
+  return {
+    routingKey: str(row.routing_key),
+    redelivered: row.redelivered === true,
+    headers: asRecord(asRecord(row.properties).headers),
+    body,
+    json,
+    isObject: typeof json === 'object' && json !== null && !Array.isArray(json),
+  };
+}
+
+export function queueMessageFacts(messages: QueueMessage[]) {
+  const objects = messages.filter((message) => message.isObject).map((message) => message.json);
+  return {
+    exists: true,
+    count: messages.length,
+    objectCount: objects.length,
+    otherCount: messages.length - objects.length,
+    messages,
+    objects,
+    bodies: messages.map((message) => message.body),
+  };
 }
 
 async function publishMessage(params: PublishParams, marker: string) {
@@ -125,6 +187,16 @@ export const RABBITMQ_EXECUTORS: ExecutorTable = {
     return { count: bindings.length, bindings };
   }),
 
+  'rabbitmq.messages': executor<{ queue: string; limit?: number }>(async ({ queue, limit }) => {
+    const result = await call(`/queues/${VHOST}/${encodeURIComponent(queue)}/get`, {
+      method: 'POST',
+      json: { count: limit ?? DEFAULT_MESSAGE_LIMIT, ackmode: 'ack_requeue_true', encoding: 'auto', truncate: MESSAGE_TRUNCATE },
+    });
+    if (result.status === 404) return { ...queueMessageFacts([]), exists: false };
+    if (!result.ok) throw failure(MODULE, 'чтение сообщений очереди', result);
+    return queueMessageFacts(asArray(result.json).map(describeQueueMessage));
+  }),
+
   'rabbitmq.route': executor<RouteParams>(async (params) => {
     const marker = randomUUID();
     const published = await publishMessage(params, marker);
@@ -179,6 +251,28 @@ export const RABBITMQ_EXECUTORS: ExecutorTable = {
     const result = await call('/definitions', { method: 'POST', json: definitions });
     if (!result.ok) throw failure(MODULE, 'загрузка определений', result);
     return { imported: true };
+  }),
+
+  'rabbitmq.deleteQueues': executor<{ names: string[] }>(async ({ names }) => {
+    assertDeletableQueues(names);
+    const deleted: string[] = [];
+    for (const name of names) {
+      const result = await call(`/queues/${VHOST}/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      if (result.ok) deleted.push(name);
+      else if (result.status !== 404) throw failure(MODULE, `удаление очереди ${name}`, result);
+    }
+    return { deleted };
+  }),
+
+  'rabbitmq.purgeQueues': executor<{ names: string[] }>(async ({ names }) => {
+    assertPurgeableQueues(names);
+    const purged: string[] = [];
+    for (const name of names) {
+      const result = await call(`/queues/${VHOST}/${encodeURIComponent(name)}/contents`, { method: 'DELETE' });
+      if (result.ok) purged.push(name);
+      else if (result.status !== 404) throw failure(MODULE, `очистка очереди ${name}`, result);
+    }
+    return { purged };
   }),
 
   'rabbitmq.publish': executor<PublishParams>(async (params) => {

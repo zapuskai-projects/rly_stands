@@ -143,6 +143,41 @@ describe('служебный API банка: секрет, сценарий, с�
       assert.equal(pick((await h.api(petr, 'GET', '/api/v1/me')).body, 'limits.dailyPhoneTransfer.limit'), 5_000_000);
     });
 
+    it('пополнение счёта и переводы прошлого: деньги и лимит расходуются, книга сходится, метки у прошлых переводов нет', async () => {
+      await scenario({
+        bankTime: '2026-10-21T00:20',
+        defects: ['daily-limit-utc'],
+        personas: [{ phone: ANNA, topUpKop: 10_000_000, history: [{ at: '2026-10-20T23:10', amountKop: 14_000_000 }] }],
+      });
+      const anna = await h.login(ANNA);
+      const account = await accountOf(h, anna);
+      assert.equal(account.balance, 12_000_000 + 10_000_000 - 14_000_000);
+      assert.deepEqual((await h.kit('GET', '/_kit/facts/ledger')).body, { inconsistent: [] });
+      const past = (await h.kit('GET', `/_kit/facts/operations?phone=${encodeURIComponent(ANNA)}`)).body as Record<string, unknown>[];
+      const old = past.find((item) => item.amountKop === 14_000_000);
+      assert.equal(old?.status, 'COMPLETED');
+      assert.equal(old?.createdAt, '2026-10-20T23:10:00.000+03:00');
+      assert.deepEqual((await h.pool.query('SELECT 1 FROM operations WHERE attempt_label IS NOT NULL')).rows, []);
+      const limits = (await h.api(anna, 'GET', '/api/v1/me')).body;
+      assert.equal(pick(limits, 'limits.dailyPhoneTransfer.remaining'), 1_000_000);
+      const blocked = await sendTransfer(h, anna, 'kit-scn-0201', phoneTransfer(account.number, PETR, 2_000_000));
+      assert.equal(pick(blocked.body, 'rejection.code'), 'DAILY_LIMIT_EXCEEDED');
+      await scenario({ bankTime: '2026-10-21T00:20', defects: [] });
+      const allowed = await sendTransfer(h, anna, 'kit-scn-0202', phoneTransfer(account.number, PETR, 2_000_000));
+      assert.notEqual(pick(allowed.body, 'status'), 'REJECTED');
+    });
+
+    it('переводы прошлого без денег на счёте — 422, баланс не уходит в минус и ничего не применяется', async () => {
+      const before = await accountOf(h, await h.login(ANNA));
+      const rejected = await scenario({
+        defects: ['limit-boundary'],
+        personas: [{ phone: ANNA, topUpKop: 100, history: [{ at: '2026-10-20T23:10', amountKop: 90_000_000 }] }],
+      });
+      assert.equal(rejected.status, 422);
+      assert.equal(pick(rejected.body, 'code'), 'INSUFFICIENT_FUNDS_FOR_HISTORY');
+      assert.equal((await accountOf(h, await h.login(ANNA))).balance, before.balance);
+    });
+
     it('неверное тело — 400 со списком полей, неизвестный тариф и персона — 422, ничего не применяется частично', async () => {
       const invalid = await scenario({ defects: ['limit-boundary', 'нет-такого'], sbpMode: 'DOWN' });
       assert.equal(invalid.status, 400);

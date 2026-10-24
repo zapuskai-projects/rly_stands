@@ -402,6 +402,23 @@ components:
         accountStatus:
           type: string
           enum: [ACTIVE, ARRESTED]
+        topUpKop:
+          $ref: '#/components/schemas/Kopecks'
+          description: Положить на основной счёт клиента эту сумму
+        history:
+          type: array
+          maxItems: 10
+          description: Выполненные переводы по телефону в прошлом, без метки попытки; расходуют остаток счёта и суточный лимит клиента в сутки своей даты
+          items:
+            type: object
+            additionalProperties: false
+            required: [at, amountKop]
+            properties:
+              at:
+                type: string
+                description: ISO 8601, без смещения — московское время
+              amountKop:
+                $ref: '#/components/schemas/Kopecks'
     ScenarioRequest:
       type: object
       additionalProperties: false
@@ -565,8 +582,43 @@ components:
     OperationFact:
       type: object
       additionalProperties: false
-      required: [id, number, clientPhone, type, route, status, amountKop, feeKop, reasonCode, createdAt, ageSeconds, hasKopecks, statusHistory]
+      required: [id, number, clientPhone, type, route, status, amountKop, feeKop, reasonCode, createdAt, ageSeconds, hasKopecks, statusHistory, wasOnReview, createdWhileOtherOnReview, limitBeforeKop, limitAfterKop, limitMarginKop, limitBeforeRub, clientRemainingKop, clientRemainingRub, antifraudScore, defectCodes, recipientPhone]
       properties:
+        recipientPhone:
+          type: [string, 'null']
+          description: Телефон получателя перевода по телефону; null для перевода между своими счетами
+        antifraudScore:
+          type: [integer, 'null']
+          description: Сумма баллов антифрода по операции; null, если антифрод её не оценивал
+        defectCodes:
+          type: array
+          description: Коды сбоев, сработавших на операции
+          items:
+            type: string
+        wasOnReview:
+          type: boolean
+          description: Операция побывала в статусе `ON_REVIEW`
+        createdWhileOtherOnReview:
+          type: boolean
+          description: В момент создания у клиента была другая операция в статусе `ON_REVIEW`
+        limitBeforeKop:
+          type: [integer, 'null']
+          description: Остаток суточного лимита переводов по телефону перед этой операцией с учётом более ранних переводов клиента за те же московские сутки; null для переводов не по телефону
+        limitAfterKop:
+          type: [integer, 'null']
+          description: Остаток лимита после операции; у отклонённой равен остатку до неё
+        limitMarginKop:
+          type: [integer, 'null']
+          description: Остаток перед операцией минус её сумма; отрицательный — сумма превышает остаток
+        limitBeforeRub:
+          type: [number, 'null']
+          description: То же, что limitBeforeKop, в рублях
+        clientRemainingKop:
+          $ref: '#/components/schemas/Kopecks'
+          description: Остаток суточного лимита клиента на момент чтения
+        clientRemainingRub:
+          type: number
+          description: То же, что clientRemainingKop, в рублях
         id:
           type: string
           format: uuid
@@ -734,7 +786,7 @@ components:
     RequestFact:
       type: object
       additionalProperties: false
-      required: [method, path, status, responseStatus, errorCode, operationId, replayed, idempotencyKey, at]
+      required: [method, path, status, responseStatus, errorCode, operationId, replayed, idempotencyKey, at, operationTerminalAt]
       properties:
         method:
           type: string
@@ -760,3 +812,6 @@ components:
           type: [string, 'null']
         at:
           type: string
+        operationTerminalAt:
+          type: [string, 'null']
+          description: Когда операция запроса перешла в конечный статус; null, пока она в работе или запрос без операции

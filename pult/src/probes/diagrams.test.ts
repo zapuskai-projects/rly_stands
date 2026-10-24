@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { c4Facts, classFacts, encodePlantuml, extractTitle, sequenceFacts, stateFacts } from './diagrams';
+import { c4Facts, classFacts, encodePlantuml, extractTitle, linkPairs, sequenceFacts, stateFacts } from './diagrams';
 
 const SEQUENCE = `@startuml
 title k3x9ab Согласование документа
@@ -89,5 +89,23 @@ describe('факты диаграмм', () => {
     assert.deepEqual(facts.edges, ['[*] -> CREATED', 'CREATED -> CHECKING', 'CHECKING -> [*]']);
     assert.equal(facts.transitions[1]?.label, 'принят');
     assert.deepEqual(facts.syntaxErrors, []);
+  });
+});
+
+describe('linkPairs', () => {
+  it('пары сущностей без учёта направления и повторов', () => {
+    assert.deepEqual(
+      linkPairs([
+        { from: 'accounts', to: 'clients' },
+        { from: 'clients', to: 'accounts' },
+        { from: 'postings', to: 'operations' },
+      ]),
+      ['accounts--clients', 'operations--postings'],
+    );
+  });
+
+  it('факты ER-файла несут пары для проверки связей', () => {
+    const facts = classFacts('@startuml\nentity a {\n}\nentity b {\n}\nb }o--|| a\n@enduml');
+    assert.deepEqual(facts.linkPairs, ['a--b']);
   });
 });

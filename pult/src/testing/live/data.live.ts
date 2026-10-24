@@ -96,6 +96,21 @@ liveSuite('data', READINESS.postgres ?? [], 'PostgreSQL: проверки на �
     assert.equal(slow.rowCount, 0);
   });
 
+  it('внешние ключи схемы: таблица, колонка, цель; ключевые колонки по таблице; фильтр по именам', async () => {
+    const all = await probe<Facts>('postgres.foreignKeys', {});
+    const ours = all.foreignKeys.filter((item: Facts) => item.table === 'live_orders');
+    assert.deepEqual(ours, [{ table: 'live_orders', column: 'customer_id', refTable: 'live_customers', refColumn: 'id' }]);
+    assert.deepEqual(all.byTable.live_orders, {
+      primaryKey: ['id'],
+      foreignKeyColumns: ['customer_id'],
+      refTables: ['live_customers'],
+      keyColumns: ['id', 'customer_id'],
+    });
+    const only = await probe<Facts>('postgres.foreignKeys', { tables: ['live_customers'] });
+    assert.deepEqual(only.tables, ['live_customers']);
+    assert.equal(only.count, 0);
+  });
+
   it('уборка', async () => {
     await probe('postgres.sql', { sql: 'DROP TABLE live_orders; DROP TABLE live_customers;' });
     assert.equal((await probe<Facts>('postgres.table', { name: 'live_orders' })).exists, false);

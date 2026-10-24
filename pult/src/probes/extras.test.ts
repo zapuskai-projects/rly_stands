@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { duplicateKeys, operationFacts } from './bank';
+import { duplicateKeys, operationFacts, pollFacts, pollSummaries } from './bank';
 import { stateFacts } from './diagrams';
 import { describeMessage, fieldPaths, summarizeByKey, userTopics } from './kafka';
 import { EXECUTORS } from './registry';
@@ -140,19 +140,29 @@ COMPLETED --> [*]
 });
 
 describe('факты банка', () => {
-  it('ключи повтора, встретившиеся дважды и чаще, — с числом запросов', () => {
+  it('ключи повтора, встретившиеся дважды и чаще, — с числом запросов и разных операций', () => {
     assert.deepEqual(
       duplicateKeys([
-        { idempotencyKey: 'a-key-0001' },
+        { idempotencyKey: 'a-key-0001', operationId: 'op-1' },
         { idempotencyKey: 'b-key-0002' },
-        { idempotencyKey: 'a-key-0001' },
-        { idempotencyKey: 'a-key-0001' },
+        { idempotencyKey: 'a-key-0001', operationId: 'op-1' },
+        { idempotencyKey: 'a-key-0001', operationId: null },
         { idempotencyKey: null },
         {},
       ]),
-      [{ key: 'a-key-0001', count: 3 }],
+      [{ key: 'a-key-0001', count: 3, operations: 1 }],
     );
     assert.deepEqual(duplicateKeys([{ idempotencyKey: 'x' }]), []);
+  });
+
+  it('ключ, по которому созданы две операции, виден по числу разных операций', () => {
+    assert.deepEqual(
+      duplicateKeys([
+        { idempotencyKey: 'k-0000001', operationId: 'op-1' },
+        { idempotencyKey: 'k-0000001', operationId: 'op-2' },
+      ]),
+      [{ key: 'k-0000001', count: 2, operations: 2 }],
+    );
   });
 
   it('у операции есть возраст и признак копеек, даже если банк их не прислал', () => {
@@ -174,6 +184,15 @@ describe('platform.answer', () => {
       { workDir: dir, label: 'k7f3qa', saveReport: async (report) => void saved.push(report) },
     );
     assert.deepEqual(saved, [{ answer: '40817810000000000001' }]);
+  });
+
+  it('ответ из нескольких полей уходит в сдачу целиком', async () => {
+    const saved: Array<Record<string, string>> = [];
+    await EXECUTORS['platform.answer']!(
+      { documents: 'Статусная модель', available: '50000' },
+      { workDir: dir, label: 'k7f3qa', saveReport: async (report) => void saved.push(report) },
+    );
+    assert.deepEqual(saved, [{ documents: 'Статусная модель', available: '50000' }]);
   });
 
   it('вне попытки — понятная ошибка', async () => {
@@ -245,5 +264,48 @@ describe('список топиков брокера', () => {
       ['bank.antifraud.decisions', 'bank.payments.created', 'bank.payments.status-changed'],
     );
     assert.deepEqual(userTopics([]), []);
+  });
+});
+
+describe('bank.requestLog: опрос операции', () => {
+  const OP = '0b2f4a5e-1c3d-4e5f-8a9b-0c1d2e3f4a5b';
+  const get = (at: string, terminalAt: string | null, operationId: string | null = OP) => ({
+    method: 'GET',
+    path: operationId ? `/api/v1/operations/${operationId}` : '/api/v1/operations',
+    operationId,
+    at,
+    operationTerminalAt: terminalAt,
+  });
+  const terminal = '2026-10-20T10:00:03+03:00';
+
+  it('опросы считаются по операции: сколько всего, сколько после конечного статуса, первый и последний', () => {
+    const requests = [
+      { method: 'POST', path: '/api/v1/transfers', operationId: OP, at: '2026-10-20T10:00:00+03:00', operationTerminalAt: terminal },
+      get('2026-10-20T10:00:01+03:00', terminal),
+      get('2026-10-20T10:00:02+03:00', terminal),
+      get('2026-10-20T10:00:04+03:00', terminal),
+    ];
+    assert.deepEqual(pollSummaries(requests), [
+      {
+        operationId: OP,
+        polls: 3,
+        pollsAfterTerminal: 1,
+        firstPollAt: '2026-10-20T10:00:01+03:00',
+        lastPollAt: '2026-10-20T10:00:04+03:00',
+        terminalAt: terminal,
+      },
+    ]);
+  });
+
+  it('список операций и чужие методы опросом не считаются; пока операция в работе, после конечного статуса ноль', () => {
+    const facts = pollFacts([get('2026-10-20T10:00:01+03:00', null, null), get('2026-10-20T10:00:02+03:00', null)]);
+    assert.equal(facts.polls.length, 1);
+    assert.equal(facts.maxPolls, 1);
+    assert.equal(facts.maxPollsAfterTerminal, 0);
+    assert.equal(facts.polledTerminalCount, 0);
+  });
+
+  it('без запросов — нули', () => {
+    assert.deepEqual(pollFacts([]), { polls: [], maxPolls: 0, maxPollsAfterTerminal: 0, polledTerminalCount: 0 });
   });
 });

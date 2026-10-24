@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { BANK_EXECUTORS } from './bank';
-import { resolveBankTime } from './bank-api';
+import { hasFunding, resolveBankTime, resolvePersonaTimes } from './bank-api';
 import { runActions, substituteResults } from './run';
 
 type Seen = { method: string; url: string; secret: string | undefined; body: unknown };
@@ -201,5 +201,37 @@ describe('время банка в сценарии', () => {
     assert.equal(resolveBankTime('night', new Date('2026-10-20T20:30:00Z')), '2026-10-20T23:10');
     assert.equal(resolveBankTime('night', new Date('2026-10-20T21:30:00Z')), '2026-10-21T23:10');
     assert.equal(resolveBankTime('night', new Date('2026-10-20T09:00:00Z')), '2026-10-20T23:10');
+  });
+});
+
+describe('персоны сценария: время переводов прошлого', () => {
+  it('пресет времени в history раскрывается так же, как время банка; остальные поля не трогаются', () => {
+    const now = new Date('2026-10-20T09:00:00Z');
+    const personas = [
+      { phone: '+79001110001', topUpKop: 100, history: [{ at: 'night', amountKop: 14_000_000 }, { at: '2026-10-19T21:30', amountKop: 1 }] },
+      { phone: '+79001110002', dailyLimitKop: 5 },
+    ];
+    assert.deepEqual(resolvePersonaTimes(personas, now), [
+      { phone: '+79001110001', topUpKop: 100, history: [{ at: '2026-10-20T23:10', amountKop: 14_000_000 }, { at: '2026-10-19T21:30', amountKop: 1 }] },
+      { phone: '+79001110002', dailyLimitKop: 5 },
+    ]);
+  });
+
+  it('сценарий без reset не принимает пополнение и историю: запроса в банк нет', async () => {
+    seen.length = 0;
+    await assert.rejects(
+      run('bank.scenario', { personas: [{ phone: '+79001110001', topUpKop: 100 }] }),
+      /только с reset: true/,
+    );
+    assert.equal(seen.length, 0);
+    await run('bank.scenario', { personas: [{ phone: '+79001110001', dailyLimitKop: 5 }] });
+    assert.deepEqual(seen.map((item) => item.url), ['/_kit/scenario']);
+  });
+
+  it('hasFunding: пополнение и история видны, остальное нет', () => {
+    assert.equal(hasFunding(undefined), false);
+    assert.equal(hasFunding([{ phone: '+79001110002', dailyLimitKop: 5 }]), false);
+    assert.equal(hasFunding([{ phone: '+79001110001', topUpKop: 100 }]), true);
+    assert.equal(hasFunding([{ phone: '+79001110001', history: [] }]), true);
   });
 });

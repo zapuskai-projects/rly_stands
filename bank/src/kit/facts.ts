@@ -2,15 +2,19 @@ import { sumActiveHolds } from '../accounts/accounts.repository';
 import { toApiAmount } from '../accounts/money';
 import { toMoscowIso } from '../clock/moscow';
 import type { Db } from '../db/pool';
+import { isTerminal, OPERATION_STATUSES } from '../payments/status';
 import { findDecision } from '../antifraud/decisions.repository';
 import { listDefectMarks } from '../defects/defects.repository';
 import { ageSecondsOf, hasKopecks } from './operation-age';
+import { traceFacts, type OperationTraceFacts } from './operation-trace';
 
 const OPERATIONS_LIMIT = 500;
 const REQUESTS_LIMIT = 1000;
+const TERMINAL_STATUSES = OPERATION_STATUSES.filter(isTerminal);
 
 interface OperationRow {
   id: string;
+  client_id: string;
   number: string;
   phone: string;
   type: string;
@@ -19,6 +23,7 @@ interface OperationRow {
   amount_kop: bigint;
   fee_kop: bigint;
   reject_code: string | null;
+  recipient_phone: string | null;
   created_at: Date;
   completed_at: Date | null;
 }
@@ -36,7 +41,7 @@ export interface OperationFilter {
   status?: string;
 }
 
-export interface KitOperationFact {
+export interface KitOperationFact extends OperationTraceFacts {
   id: string;
   number: string;
   clientPhone: string;
@@ -46,14 +51,17 @@ export interface KitOperationFact {
   amountKop: number;
   feeKop: number;
   reasonCode: string | null;
+  recipientPhone: string | null;
   createdAt: string;
   ageSeconds: number;
   hasKopecks: boolean;
   statusHistory: { status: string; at: string; reasonCode: string | null }[];
+  antifraudScore: number | null;
+  defectCodes: string[];
 }
 
 const SELECT_OPERATION = `
-  SELECT o.id, o.number, c.phone, o.type, o.route, o.status, o.amount_kop, o.fee_kop, o.reject_code, o.created_at, o.completed_at
+  SELECT o.id, o.client_id, o.number, c.phone, o.type, o.route, o.status, o.amount_kop, o.fee_kop, o.reject_code, o.recipient_phone, o.created_at, o.completed_at
   FROM operations o JOIN clients c ON c.id = o.client_id`;
 
 async function withHistory(db: Db, rows: OperationRow[], now: Date): Promise<KitOperationFact[]> {
@@ -61,10 +69,21 @@ async function withHistory(db: Db, rows: OperationRow[], now: Date): Promise<Kit
     'SELECT operation_id, status, reason_code, changed_at FROM operation_status_history WHERE operation_id = ANY($1::uuid[]) ORDER BY id',
     [rows.map((row) => row.id)],
   );
+  const traces = await traceFacts(db, rows, now);
+  const ids = rows.map((row) => row.id);
+  const scores = await db.query<{ operation_id: string; score: number }>(
+    'SELECT operation_id, score FROM antifraud_decisions WHERE operation_id = ANY($1::uuid[])',
+    [ids],
+  );
+  const marks = await db.query<{ operation_id: string; defect_code: string }>(
+    'SELECT operation_id, defect_code FROM defect_marks WHERE operation_id = ANY($1::uuid[]) ORDER BY id',
+    [ids],
+  );
   return rows.map((row) => {
     const steps = history.rows.filter((step) => step.operation_id === row.id);
     const reason = row.reject_code ?? [...steps].reverse().find((step) => step.reason_code !== null)?.reason_code ?? null;
     return {
+      ...(traces.get(row.id) as OperationTraceFacts),
       id: row.id,
       number: row.number,
       clientPhone: row.phone,
@@ -74,10 +93,13 @@ async function withHistory(db: Db, rows: OperationRow[], now: Date): Promise<Kit
       amountKop: toApiAmount(row.amount_kop),
       feeKop: toApiAmount(row.fee_kop),
       reasonCode: reason,
+      recipientPhone: row.recipient_phone,
       createdAt: toMoscowIso(row.created_at),
       ageSeconds: ageSecondsOf(row.created_at, now),
       hasKopecks: hasKopecks(row.amount_kop),
       statusHistory: steps.map((step) => ({ status: step.status, at: toMoscowIso(step.changed_at), reasonCode: step.reason_code })),
+      antifraudScore: scores.rows.find((item) => item.operation_id === row.id)?.score ?? null,
+      defectCodes: marks.rows.filter((item) => item.operation_id === row.id).map((item) => item.defect_code),
     };
   });
 }
@@ -170,10 +192,12 @@ export async function listRequestFacts(db: Db, label: string) {
     error_code: string | null;
     operation_id: string | null;
     replayed: boolean;
+    terminal_at: Date | null;
   }>(
-    `SELECT method, path, status, idempotency_key, requested_at, error_code, operation_id, replayed
-     FROM request_log WHERE attempt_label = $1 ORDER BY id LIMIT ${REQUESTS_LIMIT}`,
-    [label],
+    `SELECT r.method, r.path, r.status, r.idempotency_key, r.requested_at, r.error_code, r.operation_id, r.replayed,
+            (SELECT MIN(h.changed_at) FROM operation_status_history h WHERE h.operation_id = r.operation_id AND h.status = ANY($2::text[])) AS terminal_at
+     FROM request_log r WHERE r.attempt_label = $1 ORDER BY r.id LIMIT ${REQUESTS_LIMIT}`,
+    [label, TERMINAL_STATUSES],
   );
   return result.rows.map((row) => ({
     method: row.method,
@@ -185,5 +209,6 @@ export async function listRequestFacts(db: Db, label: string) {
     replayed: row.replayed,
     idempotencyKey: row.idempotency_key,
     at: toMoscowIso(row.requested_at),
+    operationTerminalAt: row.terminal_at ? toMoscowIso(row.terminal_at) : null,
   }));
 }

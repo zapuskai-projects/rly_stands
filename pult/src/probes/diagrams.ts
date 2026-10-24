@@ -50,9 +50,19 @@ export function sequenceFacts(source: string) {
   };
 }
 
+export function linkPairs(relations: Array<{ from: string; to: string }>): string[] {
+  return [...new Set(relations.map((item) => [item.from, item.to].sort().join('--')))].sort();
+}
+
 export function classFacts(source: string) {
   const parsed = parseClasses(source);
-  return { title: extractTitle(source), syntaxErrors: parsed.errors, classes: parsed.classes, relations: parsed.relations };
+  return {
+    title: extractTitle(source),
+    syntaxErrors: parsed.errors,
+    classes: parsed.classes,
+    relations: parsed.relations,
+    linkPairs: linkPairs(parsed.relations),
+  };
 }
 
 export function stateFacts(source: string) {
@@ -96,7 +106,7 @@ export const DIAGRAM_EXECUTORS: ExecutorTable = {
   ),
 
   'plantuml.class': executor<{ file: string }>(({ file }, ctx) =>
-    diagramProbe(readWorkText(ctx, file), file, classFacts, { classes: [], relations: [] }),
+    diagramProbe(readWorkText(ctx, file), file, classFacts, { classes: [], relations: [], linkPairs: [] }),
   ),
 
   'plantuml.state': executor<{ file: string }>(({ file }, ctx) =>

@@ -25,28 +25,33 @@ const tariffPatch = z
   })
   .strict();
 
+const momentText = z.string().regex(ISO_MOMENT, 'время в формате ISO 8601, без смещения считается московским');
+
+function toInstant(value: string, context: z.RefinementCtx): Date {
+  const instant = new Date(/(Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}${MOSCOW_OFFSET}`);
+  if (Number.isNaN(instant.getTime())) {
+    context.addIssue({ code: 'custom', message: 'такого момента не существует' });
+    return z.NEVER;
+  }
+  return instant;
+}
+
+const bankTime = momentText.nullable().transform((value, context) => (value === null ? null : toInstant(value, context)));
+
+const historyTransfer = z
+  .object({ at: momentText.transform((value, context) => toInstant(value, context)), amountKop: z.int().min(1) })
+  .strict();
+
 const personaPatch = z
   .object({
     phone,
     tariffCode: z.enum(['START', 'PENSION']).optional(),
     dailyLimitKop: kopecks.nullable().optional(),
     accountStatus: z.enum(['ACTIVE', 'ARRESTED']).optional(),
+    topUpKop: z.int().min(1).max(MAX_CHECK_BALANCE_KOP).optional(),
+    history: z.array(historyTransfer).max(10).optional(),
   })
   .strict();
-
-const bankTime = z
-  .string()
-  .regex(ISO_MOMENT, 'время в формате ISO 8601, без смещения считается московским')
-  .nullable()
-  .transform((value, context) => {
-    if (value === null) return null;
-    const instant = new Date(/(Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}${MOSCOW_OFFSET}`);
-    if (Number.isNaN(instant.getTime())) {
-      context.addIssue({ code: 'custom', message: 'такого момента не существует' });
-      return z.NEVER;
-    }
-    return instant;
-  });
 
 const defects = z.array(z.string()).transform((codes, context) => {
   for (const [index, code] of codes.entries()) {

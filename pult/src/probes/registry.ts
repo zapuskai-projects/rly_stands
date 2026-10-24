@@ -9,6 +9,7 @@ import { ELASTICSEARCH_EXECUTORS } from './elasticsearch';
 import { FILE_EXECUTORS } from './files';
 import { GRPC_EXECUTORS } from './grpc';
 import { JSONSCHEMA_EXECUTORS } from './jsonschema';
+import { JUNIT_EXECUTORS } from './junit';
 import { KAFKA_EXECUTORS } from './kafka';
 import { KIT_EXECUTORS } from './kit';
 import { LINUX_EXECUTORS } from './linux';
@@ -36,6 +37,7 @@ export const EXECUTORS: ExecutorTable = {
   ...MONITORING_EXECUTORS,
   ...LINUX_EXECUTORS,
   ...FILE_EXECUTORS,
+  ...JUNIT_EXECUTORS,
   ...BANK_EXECUTORS,
   ...BANK_RUN_EXECUTORS,
   ...BANK_HTTP_EXECUTORS,

@@ -119,3 +119,68 @@ describe('parseClasses', () => {
     assert.deepEqual(parseClasses('class A {\n  x: Int').errors, ['класс A не закрыт']);
   });
 });
+
+describe('ER-диаграмма: entity, ключи и связи с кратностью', () => {
+  const ER = [
+    '@startuml',
+    'entity "clients" as clients {',
+    '  * id : uuid <<PK>>',
+    '  --',
+    '  full_name : text',
+    '}',
+    'entity accounts {',
+    '  * id : uuid <<PK>>',
+    '  * client_id : uuid <<FK>>',
+    '  balance_kop : numeric(19,2)',
+    '}',
+    'entity postings {',
+    '  *id',
+    '  --',
+    '  * debit_account_id : uuid',
+    '  operation_id <<FK>>',
+    '}',
+    'accounts }o--|| clients : владелец',
+    'postings }|..|| accounts',
+    'clients ||--o{ accounts',
+    '@enduml',
+  ].join('\n');
+
+  it('entity разбирается как сущность, поля с типом, скобки в типе не делают поле методом', () => {
+    const model = parseClasses(ER);
+    assert.deepEqual(model.errors, []);
+    assert.deepEqual(model.classes.map((item) => [item.name, item.kind]), [
+      ['clients', 'entity'],
+      ['accounts', 'entity'],
+      ['postings', 'entity'],
+    ]);
+    const balance = model.classes[1]?.attributes.find((item) => item.name === 'balance_kop');
+    assert.equal(balance?.type, 'numeric(19,2)');
+    assert.deepEqual(model.classes[1]?.methods, []);
+  });
+
+  it('отметки ключа: <<PK>>, <<FK>>, звёздочка — обязательное, поля над разделителем без явного PK — ключ', () => {
+    const [clients, accounts, postings] = parseClasses(ER).classes;
+    assert.deepEqual(clients?.attributes.map((item) => [item.name, item.pk, item.fk, item.mandatory]), [
+      ['id', true, false, true],
+      ['full_name', false, false, false],
+    ]);
+    assert.deepEqual(accounts?.attributes.filter((item) => item.fk).map((item) => item.name), ['client_id']);
+    assert.deepEqual(postings?.attributes.map((item) => [item.name, item.pk, item.fk]), [
+      ['id', true, false],
+      ['debit_account_id', false, false],
+      ['operation_id', false, true],
+    ]);
+  });
+
+  it('связи с кратностью вороньей лапки читаются в обе стороны', () => {
+    const { relations } = parseClasses(ER);
+    assert.deepEqual(
+      relations.map((item) => [item.from, item.to, item.fromMultiplicity, item.toMultiplicity, item.label]),
+      [
+        ['accounts', 'clients', '0..*', '1', 'владелец'],
+        ['postings', 'accounts', '1..*', '1', null],
+        ['clients', 'accounts', '1', '0..*', null],
+      ],
+    );
+  });
+});

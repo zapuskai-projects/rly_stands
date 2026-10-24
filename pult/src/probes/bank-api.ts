@@ -83,3 +83,18 @@ export function resolveBankTime(value: string | null | undefined, now: Date = ne
   const moment = new Date(Date.parse(`${day}T00:00:00Z`) + (hours * 60 + minutes + Number(shifted[2])) * MINUTE_MS);
   return `${moment.getUTCFullYear()}-${pad(moment.getUTCMonth() + 1)}-${pad(moment.getUTCDate())}T${pad(moment.getUTCHours())}:${pad(moment.getUTCMinutes())}`;
 }
+
+export function resolvePersonaTimes(personas: unknown[], now: Date = new Date()): unknown[] {
+  return personas.map((persona) => {
+    const history = (persona as { history?: Array<{ at: string; amountKop: number }> }).history;
+    if (!history) return persona;
+    return { ...(persona as object), history: history.map((item) => ({ ...item, at: resolveBankTime(item.at, now) })) };
+  });
+}
+
+export function hasFunding(personas: unknown[] | undefined): boolean {
+  return (personas ?? []).some((persona) => {
+    const row = persona as { topUpKop?: unknown; history?: unknown };
+    return row.topUpKop !== undefined || row.history !== undefined;
+  });
+}

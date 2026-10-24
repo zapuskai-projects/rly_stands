@@ -1,5 +1,6 @@
 import { Client } from 'pg';
 import { ProbeError, errorText } from './errors';
+import { foreignKeyFacts, type KeyRow } from './postgres-keys';
 import { executor, type ExecutorTable } from './types';
 
 const MODULE = 'PostgreSQL';
@@ -81,6 +82,18 @@ const INDEXES_SQL = `
   JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = $1 AND c.relname = $2 AND NOT ix.indisprimary`;
 
+const SCHEMA_KEYS_SQL = `
+  SELECT c.relname AS "table", con.contype AS kind, att.attname AS "column", ref.relname AS "refTable", refatt.attname AS "refColumn"
+  FROM pg_constraint con
+  JOIN pg_class c ON c.oid = con.conrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  LEFT JOIN pg_class ref ON ref.oid = con.confrelid
+  CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY k(attnum, ord)
+  JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = k.attnum
+  LEFT JOIN pg_attribute refatt ON refatt.attrelid = con.confrelid AND refatt.attnum = con.confkey[k.ord]
+  WHERE n.nspname = $1 AND con.contype IN ('p', 'f')
+  ORDER BY c.relname, con.conname, k.ord`;
+
 function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
@@ -133,6 +146,13 @@ export const POSTGRES_EXECUTORS: ExecutorTable = {
         rows: count.rows[0]?.rows ?? 0,
       };
     }),
+  ),
+
+  'postgres.foreignKeys': executor<{ database?: Database; schema?: string; tables?: string[] }>(({ database, schema, tables }) =>
+    withClient(async (client) => {
+      const result = await client.query<KeyRow>(SCHEMA_KEYS_SQL, [schema ?? 'public']);
+      return foreignKeyFacts(result.rows, tables);
+    }, database),
   ),
 
   'postgres.query': executor<{ sql: string }>(({ sql }) =>

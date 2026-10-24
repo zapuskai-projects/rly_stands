@@ -345,7 +345,7 @@ liveSuite('bank', READINESS.bank ?? [], 'ЗапускБанк: проверки 
     const posts = log.requests.filter((request: Facts) => request.path === '/api/v1/transfers');
     assert.deepEqual(posts.map((request: Facts) => request.status), [201, 200, 400, 422]);
     assert.equal(log.requests.find((request: Facts) => request.replayed === true)?.status, 200);
-    assert.deepEqual(log.duplicateKeys, [{ key: 'live-http-ok', count: 2 }]);
+    assert.deepEqual(log.duplicateKeys, [{ key: 'live-http-ok', count: 2, operations: 1 }]);
     await eventually(
       () => probe<Facts>('bank.operation', { id: first.number }),
       (value) => value.status === 'COMPLETED',

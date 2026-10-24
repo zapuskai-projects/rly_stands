@@ -8,7 +8,8 @@ import {
   type IHeaders,
 } from 'kafkajs';
 import { ProbeError, errorText } from './errors';
-import { executor, type ExecutorTable } from './types';
+import { committedOf, deletableGroups, isProtectedGroup, readersFacts, studentGroupIds, type GroupRow } from './kafka-groups';
+import { executor, sleep, type ExecutorTable } from './types';
 
 const MODULE = 'Kafka';
 const BROKERS = ['redpanda:9092'];
@@ -16,6 +17,9 @@ const DEFAULT_MESSAGE_LIMIT = 50;
 const DEFAULT_ORDER_FIELD = 'at';
 const FIELD_DEPTH = 4;
 const READ_TIMEOUT_MS = 8000;
+const GROUP_READ_MAX_MS = 10_000;
+const GROUP_READ_IDLE_MS = 1500;
+const GROUP_READ_STEP_MS = 300;
 
 type Message = { key: string; value: string; headers?: Record<string, string> };
 
@@ -205,6 +209,27 @@ async function readMessages(topic: string, match: string | undefined, limit: num
   return collected.slice(0, limit);
 }
 
+async function groupRows(admin: Admin, topic: string, exclude: string[] | undefined): Promise<GroupRow[]> {
+  const ids = studentGroupIds((await admin.listGroups()).groups.map((group) => group.groupId), exclude);
+  if (!ids.length) return [];
+  const described = new Map((await admin.describeGroups(ids)).groups.map((group) => [group.groupId, group]));
+  const rows: GroupRow[] = [];
+  for (const groupId of ids) {
+    const offsets = await admin.fetchOffsets({ groupId });
+    const partitions = offsets.find((item) => item.topic === topic)?.partitions ?? [];
+    const other = offsets.filter((item) => item.topic !== topic).reduce((sum, item) => sum + committedOf(item.partitions).partitionsCommitted, 0);
+    const group = described.get(groupId);
+    rows.push({
+      groupId,
+      state: group?.state ?? 'Dead',
+      members: group?.members.length ?? 0,
+      ...committedOf(partitions),
+      otherTopicsCommitted: other,
+    });
+  }
+  return rows;
+}
+
 export const KAFKA_EXECUTORS: ExecutorTable = {
   'kafka.topic': executor<{ name: string }>(({ name }) =>
     withAdmin(async (admin) => {
@@ -264,6 +289,10 @@ export const KAFKA_EXECUTORS: ExecutorTable = {
     }),
   ),
 
+  'kafka.consumerGroups': executor<{ topic: string; exclude?: string[] }>(({ topic, exclude }) =>
+    withAdmin(async (admin) => readersFacts(topic, await groupRows(admin, topic, exclude))),
+  ),
+
   'kafka.messages': executor<{ topic: string; match?: string; limit?: number; orderField?: string }>(async (params) => {
     const exists = await withAdmin((admin) => topicExists(admin, params.topic));
     if (!exists) return { count: 0, byKey: [], messages: [], fields: [], repeatedEventIds: [] };
@@ -299,6 +328,43 @@ export const KAFKA_EXECUTORS: ExecutorTable = {
         ],
       });
       return { created: true };
+    }),
+  ),
+
+  'kafka.readAsGroup': executor<{ topic: string; groupId: string }>(async ({ topic, groupId }) => {
+    if (isProtectedGroup(groupId)) throw new ProbeError(`Группа ${groupId} служебная: выберите другое имя группы`);
+    const consumer = client().consumer({ groupId, maxWaitTimeInMs: 500 });
+    let read = 0;
+    try {
+      await consumer.connect();
+      await consumer.subscribe({ topic, fromBeginning: true });
+      await consumer.run({ eachMessage: async () => void (read += 1) });
+      const deadline = Date.now() + GROUP_READ_MAX_MS;
+      let seen = -1;
+      let idleSince = Date.now();
+      while (Date.now() < deadline && Date.now() - idleSince < GROUP_READ_IDLE_MS) {
+        await sleep(GROUP_READ_STEP_MS);
+        if (read !== seen) {
+          seen = read;
+          idleSince = Date.now();
+        }
+      }
+      await consumer.stop();
+    } catch (error) {
+      throw new ProbeError(`${MODULE} не отвечает: ${errorText(error)}`);
+    } finally {
+      await consumer.disconnect().catch(() => undefined);
+    }
+    return { read };
+  }),
+
+  'kafka.deleteConsumerGroups': executor<{ topic: string; exclude?: string[] }>(({ topic, exclude }) =>
+    withAdmin(async (admin) => {
+      const { deletable, skipped } = deletableGroups(
+        (await groupRows(admin, topic, exclude)).filter((row) => row.partitionsCommitted > 0),
+      );
+      if (deletable.length) await admin.deleteGroups(deletable);
+      return { deleted: deletable, skipped };
     }),
   ),
 
