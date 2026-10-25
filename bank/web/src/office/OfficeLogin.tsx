@@ -4,6 +4,7 @@ import { BrandMark } from '../components/Brand';
 import { Footer } from '../components/Footer';
 import { ApiError, explain, officeApi, setToken } from '../lib/api';
 import { useDocumentTitle } from '../lib/hooks';
+import { OFFICE_DEMO_ACCOUNTS } from '../lib/office-demo';
 
 export function OfficeLogin() {
   useDocumentTitle('Вход для сотрудников · ЗапускБанк');
@@ -56,6 +57,27 @@ export function OfficeLogin() {
         <button type="submit" className="btn btn-primary btn-block" disabled={busy} data-testid="office-login-submit">
           {busy ? 'Подождите…' : 'Войти'}
         </button>
+        <div className="office-demo" data-testid="office-demo">
+          <span className="office-demo-title">Учётки тестового контура</span>
+          {OFFICE_DEMO_ACCOUNTS.map((account) => (
+            <button
+              key={account.login}
+              type="button"
+              className="office-demo-row"
+              onClick={() => {
+                setLogin(account.login);
+                setPassword(account.password);
+                setError(null);
+              }}
+              data-testid={`office-demo-${account.login}`}
+            >
+              <span className="office-demo-credentials">
+                {account.login} / {account.password}
+              </span>
+              <span className="office-demo-role">{account.role}</span>
+            </button>
+          ))}
+        </div>
         <a href="/" style={{ fontSize: 13 }} data-testid="office-to-bank">
           Интернет-банк для клиентов
         </a>

@@ -1,7 +1,8 @@
 import { emitKeypressEvents } from 'node:readline';
 import type { Runtime } from '../../config';
-import { listKitContainers, memoryTotalMb, profileState } from '../../docker/kit-docker';
-import { startModule, stopModule, versionReminder } from '../../modules/lifecycle';
+import { listKitContainers, memoryTotalMb, profileState, type KitContainer } from '../../docker/kit-docker';
+import { startModule, stopModule, versionReminder, type Progress } from '../../modules/lifecycle';
+import type { SessionModule } from '../../platform/types';
 import { buildRows, type ModuleRow } from '../../modules/view';
 import { fetchSession } from '../../platform/client';
 import { supportedPrimitives } from '../../platform/primitives';
@@ -10,6 +11,7 @@ import { color, screen, line, write } from '../../util/out';
 import { formatShortDate } from '../format';
 import { collectingProgress } from '../progress';
 import type { SessionContext } from '../session';
+import { askYesNo, isInteractive, offerStopIdle } from '../idle';
 import { checkFlow, startTaskFlow } from '../tasks';
 import { keyAction, type Key } from './keys';
 import { renderMenu, type MenuMode } from './render';
@@ -82,6 +84,16 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
     return true;
   };
 
+  const offerIdleStop = (module: SessionModule, containers: KitContainer[], progress: Progress) =>
+    offerStopIdle({
+      session: ctx.session,
+      starting: [module],
+      containers,
+      interactive: isInteractive(),
+      ask: askYesNo,
+      stop: (idle) => stopModule(idle, progress),
+    });
+
   const toggle = async (): Promise<boolean> => {
     const row = rows[selected];
     if (!row) return true;
@@ -93,8 +105,10 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
     screen.clear();
     const { progress, summary } = collectingProgress();
     const state = profileState(containers, module.profile);
-    if (state === 'stopped') await startModule(runtime, ctx.session, module, progress);
-    else await stopModule(module, progress);
+    if (state === 'stopped') {
+      await offerIdleStop(module, containers, progress);
+      await startModule(runtime, ctx.session, module, progress);
+    } else await stopModule(module, progress);
     message = summary();
     await refreshRows();
     return true;
@@ -121,7 +135,9 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
     if (!module) return true;
     screen.clear();
     const { progress, summary } = collectingProgress();
-    if (profileState(await listKitContainers(), module.profile) !== 'stopped') await stopModule(module, progress);
+    const containers = await listKitContainers();
+    if (profileState(containers, module.profile) !== 'stopped') await stopModule(module, progress);
+    else await offerIdleStop(module, containers, progress);
     await startModule(runtime, ctx.session, module, progress);
     message = summary();
     await refreshRows();

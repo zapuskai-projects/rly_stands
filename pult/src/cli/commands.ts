@@ -10,6 +10,7 @@ import { color, errorLine, line } from '../util/out';
 import { compareVersions } from '../util/version';
 import { runDoctor } from './doctor';
 import { formatShortDate } from './format';
+import { askYesNo, isInteractive, offerStopIdle } from './idle';
 import { runMenu } from './menu/run';
 import { renderRows } from './menu/render';
 import { consoleProgress } from './progress';
@@ -90,6 +91,14 @@ async function commandUp(runtime: Runtime, ctx: SessionContext, names: string[])
   }
   const modules = resolveModules(ctx.session, names);
   if (!modules) return 1;
+  await offerStopIdle({
+    session: ctx.session,
+    starting: modules,
+    containers: await listKitContainers(),
+    interactive: isInteractive(),
+    ask: askYesNo,
+    stop: (idle) => stopModule(idle, consoleProgress),
+  });
   let failed = 0;
   for (const module of modules) {
     if (!(await startModule(runtime, ctx.session, module, consoleProgress))) failed += 1;
