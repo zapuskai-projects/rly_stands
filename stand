@@ -20,7 +20,7 @@ fi
 docker network inspect stands-kit >/dev/null 2>&1 || docker network create stands-kit >/dev/null
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "Скачиваю пульт $VERSION…"
+  echo "Скачиваю пульт ${VERSION}…"
   if ! docker pull -q "$IMAGE" >/dev/null 2>&1; then
     echo "Пульт $VERSION не скачался: версия ещё собирается (около 15 минут после выпуска) или нет интернета." >&2
     echo "Подождите и запустите ./stand снова." >&2
