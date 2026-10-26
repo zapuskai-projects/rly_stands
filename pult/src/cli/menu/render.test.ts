@@ -60,7 +60,7 @@ describe('renderMenu', () => {
     }).map(stripAnsi);
     assert.ok(tasksView.some((row) => row.includes('Текущая задача: Очередь согласования')));
     assert.ok(tasksView.some((row) => /1\s+Очередь согласования\s+RabbitMQ\s+не зачтена/.test(row)));
-    assert.equal(tasksView.at(-1), ' ↑↓ выбрать · Enter начать задачу · П проверить · Esc назад');
+    assert.equal(tasksView.at(-1), ' ↑↓ выбрать · Enter начать задачу · Р начать текущую заново · П проверить · Esc назад');
   });
 
   it('напоминание об обновлении и пометки агента выводятся над таблицей', () => {

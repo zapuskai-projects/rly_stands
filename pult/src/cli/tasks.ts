@@ -10,7 +10,7 @@ import { collectObservations, runActions, type ProbeSpec, type StepReport } from
 import type { ProbeContext } from '../probes/types';
 import { readConfig, readCurrentTask, writeCurrentTask, type CurrentTask } from '../store/stores';
 import { color, errorLine, line } from '../util/out';
-import { findTask, renderCondition, renderOutcome, renderTaskRows } from './task-render';
+import { findTask, renderCondition, renderOutcome, renderTaskRows, taskName } from './task-render';
 
 function authOf(runtime: Runtime): PlatformAuth | null {
   const config = readConfig(runtime.dataDir);
@@ -110,6 +110,7 @@ export async function startTaskFlow(
   session: Session,
   selector: string,
   progress: Progress,
+  options: { force?: boolean } = {},
 ): Promise<boolean> {
   const task = findTask(session.tasks, selector);
   if (!task) {
@@ -132,7 +133,7 @@ export async function startTaskFlow(
   }
   const definition = started.value;
   const previous = readCurrentTask(runtime.dataDir);
-  const sameAttempt = previous?.attemptId === definition.attemptId && previous.seeded;
+  const sameAttempt = !options.force && previous?.attemptId === definition.attemptId && previous.seeded;
   const context = probeContext(runtime, definition.label, auth, definition.attemptId);
   if (!(await ensureModules(runtime, session, definition.modules.map((module) => module.key), progress, false))) return false;
   if (!sameAttempt) {
@@ -145,8 +146,22 @@ export async function startTaskFlow(
   }
   const current = toCurrent(task.id, definition, true);
   writeCurrentTask(runtime.dataDir, current);
+  if (options.force) {
+    const bank = definition.modules.some((module) => module.key === 'kit-bank');
+    progress.info(`Задача ${taskName(task)} подготовлена заново: ${bank ? 'банк сброшен, ' : ''}сценарий применён. Файлы в work/ не тронуты.`);
+    return true;
+  }
   printDefinition(current);
   return true;
+}
+
+export async function restartTaskFlow(runtime: Runtime, session: Session, progress: Progress): Promise<boolean> {
+  const current = readCurrentTask(runtime.dataDir);
+  if (!current) {
+    progress.fail('Текущей задачи нет. Выберите: ./stand tasks, затем ./stand task start <номер>');
+    return false;
+  }
+  return startTaskFlow(runtime, session, current.labId, progress, { force: true });
 }
 
 export function showCurrentTask(runtime: Runtime): number {

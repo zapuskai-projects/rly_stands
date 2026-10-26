@@ -60,7 +60,7 @@ export function renderMenu(view: MenuView): string[] {
   if (view.mode === 'tasks') {
     lines.push('', ` ${color.bold('Задачи')}`, '', ...renderTaskRows(view.tasks ?? [], view.selected), '');
     if (view.message) lines.push(` ${view.message}`, '');
-    lines.push(` ${color.dim('↑↓ выбрать · Enter начать задачу · П проверить · Esc назад')}`);
+    lines.push(` ${color.dim('↑↓ выбрать · Enter начать задачу · Р начать текущую заново · П проверить · Esc назад')}`);
     return lines;
   }
   lines.push('', ...renderRows(view.rows, view.selected), '');

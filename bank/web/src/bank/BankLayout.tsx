@@ -5,6 +5,7 @@ import { ErrorBox, Loading } from '../components/States';
 import { Footer } from '../components/Footer';
 import { clientApi, setToken } from '../lib/api';
 import { useAsync } from '../lib/hooks';
+import { profileKey } from '../lib/profile-refresh';
 import { releaseAtLeast, useBankRelease } from '../lib/release';
 import type { Profile } from '../lib/types';
 import { ProfileContext } from './profile-context';
@@ -23,7 +24,7 @@ export function BankLayout() {
   const { pathname } = useLocation();
   const flow = pathname.startsWith('/transfer') || pathname.startsWith('/operations/') || pathname.startsWith('/templates/') || pathname.startsWith('/qr');
   const release = useBankRelease();
-  const state = useAsync(() => clientApi.get<Profile>('/api/v1/me'), []);
+  const state = useAsync(() => clientApi.get<Profile>('/api/v1/me'), [profileKey(pathname)]);
 
   const logout = async () => {
     try {

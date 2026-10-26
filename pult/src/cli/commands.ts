@@ -42,6 +42,7 @@ const USAGE = `Команды набора:
   ./stand reset <стенд>   удалить контейнеры и данные стенда
   ./stand tasks           список задач
   ./stand task start <номер>  начать задачу: запустить стенды, подготовить, показать условие
+  ./stand task restart    начать текущую задачу заново: сценарий применяется снова, файлы в work/ не меняются
   ./stand task            показать условие текущей задачи ещё раз
   ./stand check           проверить текущую задачу
   ./stand verify <задача> проверить задачу эталоном (только администратор)
@@ -155,6 +156,7 @@ async function runTaskCommand(
     tasks.printTaskList(ctx.session);
     return 0;
   }
+  if (command === 'task' && args[0] === 'restart') return (await tasks.restartTaskFlow(runtime, ctx.session, consoleProgress)) ? 0 : 1;
   if (command === 'task' && args[0] !== 'start') return tasks.showCurrentTask(runtime);
   if (command === 'task') {
     if (!args[1]) {

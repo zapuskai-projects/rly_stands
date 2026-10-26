@@ -12,7 +12,7 @@ import { formatShortDate } from '../format';
 import { collectingProgress } from '../progress';
 import type { SessionContext } from '../session';
 import { askYesNo, isInteractive, offerStopIdle } from '../idle';
-import { checkFlow, startTaskFlow } from '../tasks';
+import { checkFlow, restartTaskFlow, startTaskFlow } from '../tasks';
 import { keyAction, type Key } from './keys';
 import { renderMenu, type MenuMode } from './render';
 
@@ -169,6 +169,18 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
     return true;
   };
 
+  const restartCurrentTask = async (): Promise<boolean> => {
+    if (!(await refreshSession())) return false;
+    screen.clear();
+    const { progress, summary } = collectingProgress();
+    await restartTaskFlow(runtime, ctx.session, progress);
+    message = summary();
+    await waitKey();
+    await refreshSession();
+    await refreshRows();
+    return true;
+  };
+
   const checkCurrent = async (): Promise<boolean> => {
     if (!(await refreshSession())) return false;
     screen.clear();
@@ -212,6 +224,15 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
       } else if (action === 'check') {
         busy = true;
         const alive = await checkCurrent();
+        busy = false;
+        if (!alive) {
+          draw();
+          finish();
+          return;
+        }
+      } else if (action === 'restart' && mode === 'tasks') {
+        busy = true;
+        const alive = await restartCurrentTask();
         busy = false;
         if (!alive) {
           draw();
