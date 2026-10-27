@@ -4,6 +4,7 @@ import express, { type Express, type Request, type Response } from 'express';
 import { logger } from '../shared/logger';
 
 const SERVER_PATHS = /^\/(api|partner|health|docs-content|sbp|assets|_kit)(\/|$)/;
+const FILE_PATH = /\/[^/]*\.[A-Za-z0-9]+$/;
 
 export function mountWeb(app: Express, directory: string): void {
   const index = path.join(directory, 'index.html');
@@ -19,7 +20,7 @@ export function mountWeb(app: Express, directory: string): void {
     res.sendFile(path.join(directory, 'favicon.svg'));
   });
   app.get(/^\/.*$/, (req: Request, res: Response, next) => {
-    if (SERVER_PATHS.test(req.path)) {
+    if (SERVER_PATHS.test(req.path) || FILE_PATH.test(req.path)) {
       next();
       return;
     }
