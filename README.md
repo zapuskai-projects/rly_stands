@@ -21,8 +21,9 @@
 3. Скачайте набор:
 
    ```
+   cd ~
    git clone https://github.com/zapuskai-projects/rly_stands.git
-   cd rly_stands
+   cd ~/rly_stands
    ```
 
    Нет git — скачайте [архив](https://github.com/zapuskai-projects/rly_stands/archive/refs/heads/main.zip) и распакуйте в любую папку.

@@ -17,6 +17,17 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+OUTER=$(dirname "$KIT_DIR")
+while [ "$OUTER" != "/" ] && [ "$OUTER" != "." ]; do
+  if [ -f "$OUTER/stand" ] && [ -f "$OUTER/VERSION" ] && [ -d "$OUTER/pult" ]; then
+    echo "Внимание: этот набор лежит внутри другого набора — ${OUTER}." >&2
+    echo "Пульт берёт файлы задач из ${KIT_DIR}/work. Оставьте одну папку набора и запускайте ./stand только из неё." >&2
+    echo >&2
+    break
+  fi
+  OUTER=$(dirname "$OUTER")
+done
+
 docker network inspect stands-kit >/dev/null 2>&1 || docker network create stands-kit >/dev/null
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
@@ -77,7 +88,6 @@ run_pult() {
     -e KIT_VERSION="$VERSION" \
     -e STAND_PLATFORM_URL="$PLATFORM_URL" \
     -e STAND_OPENER="$OPENER" \
-    -e STAND_SELF_UPDATE=1 \
     -e STAND_UPDATED \
     -e STAND_NO_BROWSER \
     -e STAND_MIRROR \
@@ -125,22 +135,29 @@ if [ -n "$WATCH_PID" ]; then
 fi
 
 if [ "$CODE" = "$UPDATE_EXIT" ]; then
-  if [ "${STAND_UPDATED:-0}" = 1 ]; then
-    exit 1
-  fi
   if git -C "$KIT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     if git -C "$KIT_DIR" pull --ff-only; then
-      echo "Набор обновлён до версии $(tr -d ' \r\n' < "$KIT_DIR/VERSION")."
+      NEW_VERSION=$(tr -d ' \r\n' < "$KIT_DIR/VERSION")
+      if [ "$NEW_VERSION" != "$VERSION" ]; then
+        echo "Набор обновлён до версии $NEW_VERSION."
+        unset STAND_UPDATED
+      else
+        echo "В репозитории набора новой версии пока нет. Работаю на версии $VERSION." >&2
+        STAND_UPDATED=1
+        export STAND_UPDATED
+      fi
     else
       echo "Обновить набор само не получилось: в папке набора есть свои изменения." >&2
       echo "Обновите вручную: cd \"$KIT_DIR\" && git pull. Пока работаю на старой версии." >&2
+      STAND_UPDATED=1
+      export STAND_UPDATED
     fi
   else
     echo "Набор скачан архивом, обновить его само не получится." >&2
     echo "Скачайте новую версию со страницы «Как установить» на платформе. Пока работаю на старой версии." >&2
+    STAND_UPDATED=1
+    export STAND_UPDATED
   fi
-  STAND_UPDATED=1
-  export STAND_UPDATED
   exec "$KIT_DIR/stand" "$@"
 fi
 exit "$CODE"
