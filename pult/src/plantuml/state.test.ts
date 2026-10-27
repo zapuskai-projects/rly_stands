@@ -31,6 +31,26 @@ describe('parseState', () => {
     assert.equal(find('ON_REVIEW')?.description, 'ручная проверка');
   });
 
+  it('цвет у состояния не мешает: #цвет вплотную к скобке, ##стиль, цвет перед описанием', () => {
+    const colored = parseState(`@startuml
+state COMPLETED #D4EFDF{
+  COMPLETED : Выполнен
+}
+state FAILED #FADBD8 {
+  FAILED : Не выполнен
+}
+state REJECTED ##[dashed]red : Отклонён
+state ON_REVIEW
+ON_REVIEW --> REJECTED : оператор отклонил
+COMPLETED --> [*]
+@enduml`);
+    assert.deepEqual(colored.errors, []);
+    assert.deepEqual(
+      colored.states.map((state) => [state.name, state.description]),
+      [['COMPLETED', 'Выполнен'], ['FAILED', 'Не выполнен'], ['REJECTED', 'Отклонён'], ['ON_REVIEW', null]],
+    );
+  });
+
   it('переходы идут по порядку: откуда, куда, подпись; начало и конец — [*]', () => {
     assert.deepEqual(diagram.transitions[0], { from: '[*]', to: 'CREATED', label: null, scope: null });
     assert.deepEqual(diagram.transitions[1], { from: 'CREATED', to: 'Проверка', label: 'принят', scope: null });

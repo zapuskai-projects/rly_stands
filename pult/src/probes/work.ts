@@ -40,7 +40,7 @@ export function writeWorkText(ctx: ProbeContext, relative: string, content: stri
 }
 
 export function missingFile(relative: string): string {
-  return `файла work/${relative} нет`;
+  return `файла work/${relative} нет — сохраните его под этим именем в папке work набора (rly_stands/work)`;
 }
 
 const SKIPPED_DIRS = new Set(['node_modules']);

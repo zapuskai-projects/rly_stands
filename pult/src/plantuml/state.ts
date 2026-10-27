@@ -28,7 +28,7 @@ const BACKWARD = '<(?:-+|\\.+)(?:\\[[^\\]]*\\])?(?:[a-z]+)?(?:-+|\\.+)?';
 const TRANSITION = new RegExp(`^(${NAME})\\s*(${FORWARD}|${BACKWARD})\\s*(${NAME})(?:\\s*:\\s*(.*))?$`, 'u');
 const DESCRIPTION = new RegExp(`^(${NAME})\\s*:\\s*(.+)$`, 'u');
 const DECLARATION = new RegExp(
-  `^state\\s+(?:"([^"]+)"|(${NAME}))(?:\\s+as\\s+(${NAME}))?(?:\\s*<<[^>]*>>)?(?:\\s*:\\s*(.*?))?\\s*(\\{)?\\s*$`,
+  `^state\\s+(?:"([^"]+)"|(${NAME}))(?:\\s+as\\s+(${NAME}))?(?:\\s*<<[^>]*>>)?(?:\\s*#{1,2}[^\\s{:]*)?(?:\\s*:\\s*(.*?))?\\s*(\\{)?\\s*$`,
   'iu',
 );
 
