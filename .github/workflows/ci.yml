@@ -108,4 +108,4 @@ jobs:
       - name: Упавшие тесты банка
         if: failure()
         run: |
-          awk '/failing tests:/{f=1} f' test.log | grep -E '^(test at|✖|  [A-Za-z]*Error|    (actual|expected):)' | head -40 | while IFS= read -r row; do echo "::error::$row"; done
+          grep -nE '✖|AssertionError|Error \[|actual:|expected:|timed out|ECONNREFUSED' test.log | head -40 | while IFS= read -r row; do echo "::error::$row"; done
