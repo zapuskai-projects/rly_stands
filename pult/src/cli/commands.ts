@@ -7,7 +7,6 @@ import { buildRows, findModule } from '../modules/view';
 import type { Session, SessionModule } from '../platform/types';
 import { clearConfig, readNotices, takeNotices } from '../store/stores';
 import { color, errorLine, line } from '../util/out';
-import { compareVersions } from '../util/version';
 import { runDoctor } from './doctor';
 import { formatShortDate } from './format';
 import { askYesNo, isInteractive, offerStopIdle } from './idle';
@@ -16,18 +15,14 @@ import { renderRows } from './menu/render';
 import { consoleProgress } from './progress';
 import { loadSession, login, type SessionContext } from './session';
 import { startProjectFlow } from './start';
+import { belowMinimum, needsReconcile, NO_NEW_VERSION, refusalReason, UPDATE_EXIT_CODE, UpdateOffers } from './update';
+import { reconcileAfterUpdate, runUpdateOffer } from './update-flow';
 
-/** Код выхода «обновите набор»: скрипт ./stand делает git pull и запускает пульт заново. */
-export const UPDATE_EXIT_CODE = 75;
+export { UPDATE_EXIT_CODE } from './update';
 
-export function shouldSelfUpdate(runtime: Runtime, ctx: SessionContext, env: NodeJS.ProcessEnv = process.env): boolean {
-  return (
-    env.STAND_SELF_UPDATE === '1' &&
-    env.STAND_UPDATED !== '1' &&
-    !ctx.stale &&
-    compareVersions(runtime.version, ctx.session.kit.latestVersion) < 0
-  );
-}
+const offers = new UpdateOffers();
+const LAUNCH_COMMANDS = new Set(['start', 'check']);
+const GUARDED_COMMANDS = new Set(['up', 'restart', 'task', 'verify']);
 
 const USAGE = `Команды набора:
   ./stand                 поднять учебный проект и открыть меню
@@ -202,13 +197,24 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
   printNotices(runtime, Boolean(command));
   const ctx = await loadSession(runtime, interactive);
   if (!ctx) return 1;
-  if ((!command || command === 'start') && shouldSelfUpdate(runtime, ctx)) {
-    line(`Вышла версия набора ${ctx.session.kit.latestVersion} — обновляю.`);
-    return UPDATE_EXIT_CODE;
+  const askForUpdate = !command || LAUNCH_COMMANDS.has(command) || (GUARDED_COMMANDS.has(command) && belowMinimum(runtime, ctx.session));
+  if (process.env.STAND_UPDATED) {
+    offers.suppressed = true;
+    if (askForUpdate && process.env.STAND_UPDATED === 'nonew') line(NO_NEW_VERSION);
   }
+  if (askForUpdate && !offers.suppressed) {
+    const outcome = await runUpdateOffer({ runtime, ctx, offers, atLaunch: true, progress: consoleProgress, say: line });
+    if (outcome === 'updating') return UPDATE_EXIT_CODE;
+  }
+  if (askForUpdate && belowMinimum(runtime, ctx.session) && !ctx.stale) {
+    errorLine(refusalReason(runtime, ctx.session));
+    return 1;
+  }
+  if (command !== 'start' && command !== undefined && needsReconcile(command)) await reconcileAfterUpdate(runtime, ctx.session, consoleProgress);
   if (command === 'start') {
     const outcome = await startProjectFlow(runtime, ctx.session, consoleProgress);
     if (!outcome.hasProject) line('Учебного проекта пока нет: стенды запускаются через меню ./stand.');
+    if (outcome.code === 0) await reconcileAfterUpdate(runtime, ctx.session, consoleProgress);
     return outcome.code;
   }
   if (!command) {
@@ -218,8 +224,8 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
     }
     const outcome = await startProjectFlow(runtime, ctx.session, consoleProgress);
     if (outcome.hasProject) line();
-    await runMenu(runtime, ctx);
-    return 0;
+    if (outcome.code === 0) await reconcileAfterUpdate(runtime, ctx.session, consoleProgress);
+    return (await runMenu(runtime, ctx, offers)) === 'update' ? UPDATE_EXIT_CODE : 0;
   }
   if (command === 'status') {
     await printStatus(runtime, ctx);

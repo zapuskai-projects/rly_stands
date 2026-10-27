@@ -1,6 +1,6 @@
 {
   "name": "stands-kit-pult",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "description": "Пульт набора стендов на компьютере студента",
   "type": "commonjs",

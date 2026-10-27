@@ -34,22 +34,56 @@ export function answerOf(key: AnswerKey): boolean | null {
   return null;
 }
 
-export function askYesNo(question: string): Promise<boolean> {
+export type AskInput = {
+  isRaw?: boolean;
+  on: (event: 'keypress', handler: (chunk: string, key: AnswerKey) => void) => unknown;
+  off: (event: 'keypress', handler: (chunk: string, key: AnswerKey) => void) => unknown;
+  setRawMode: (mode: boolean) => unknown;
+  resume: () => unknown;
+};
+
+export type AskOptions = {
+  /** Первые мгновения клавиши не считаются ответом: случайный Enter при загрузке не должен стать «да». */
+  settleMs?: number;
+  /** Ctrl+C завершает пульт, а не считается ответом «нет». */
+  onInterrupt?: () => void;
+  input?: AskInput;
+  out?: (text: string) => void;
+  now?: () => number;
+};
+
+export function exitPult(): void {
+  write('\x1b[?25h\n');
+  process.exit(130);
+}
+
+export function askYesNo(question: string, options: AskOptions = {}): Promise<boolean> {
+  const input = options.input ?? (process.stdin as unknown as AskInput);
+  const out = options.out ?? write;
+  const now = options.now ?? Date.now;
   return new Promise((resolve) => {
-    emitKeypressEvents(process.stdin);
-    const wasRaw = process.stdin.isRaw;
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    write(`${question} `);
+    if (!options.input) emitKeypressEvents(process.stdin);
+    const wasRaw = input.isRaw ?? false;
+    input.setRawMode(true);
+    input.resume();
+    out(`${question} `);
+    const askedAt = now();
     const handler = (_chunk: string, key: AnswerKey) => {
+      if (now() - askedAt < (options.settleMs ?? 0)) return;
+      if (options.onInterrupt && key?.ctrl && key.name === 'c') {
+        input.off('keypress', handler);
+        input.setRawMode(wasRaw);
+        options.onInterrupt();
+        return;
+      }
       const answer = answerOf(key ?? {});
       if (answer === null) return;
-      process.stdin.off('keypress', handler);
-      process.stdin.setRawMode(wasRaw);
-      write(`${answer ? 'Д' : 'н'}\n`);
+      input.off('keypress', handler);
+      input.setRawMode(wasRaw);
+      out(`${answer ? 'Д' : 'н'}\n`);
       resolve(answer);
     };
-    process.stdin.on('keypress', handler);
+    input.on('keypress', handler);
   });
 }
 

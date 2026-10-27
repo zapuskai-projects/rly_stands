@@ -1,7 +1,7 @@
 import { emitKeypressEvents } from 'node:readline';
 import type { Runtime } from '../../config';
 import { listKitContainers, memoryTotalMb, profileState, type KitContainer } from '../../docker/kit-docker';
-import { startModule, stopModule, versionReminder, type Progress } from '../../modules/lifecycle';
+import { startModule, stopModule, type Progress } from '../../modules/lifecycle';
 import type { SessionModule } from '../../platform/types';
 import { buildRows, type ModuleRow } from '../../modules/view';
 import { fetchSession } from '../../platform/client';
@@ -13,14 +13,19 @@ import { collectingProgress } from '../progress';
 import type { SessionContext } from '../session';
 import { askYesNo, isInteractive, offerStopIdle } from '../idle';
 import { checkFlow, restartTaskFlow, startTaskFlow } from '../tasks';
+import { newerVersion, updateMenuLine, UpdateOffers, withUpdateNote } from '../update';
+import { runUpdateOffer } from '../update-flow';
 import { keyAction, type Key } from './keys';
 import { renderMenu, type MenuMode } from './render';
 
 const POLL_MS = 4000;
 const SESSION_REFRESH_MS = 60_000;
 
-export async function runMenu(runtime: Runtime, initial: SessionContext): Promise<void> {
+export type MenuResult = 'quit' | 'update';
+
+export async function runMenu(runtime: Runtime, initial: SessionContext, offers: UpdateOffers = new UpdateOffers()): Promise<MenuResult> {
   let ctx = initial;
+  let updateRequested = false;
   let rows: ModuleRow[] = [];
   let mode: MenuMode = 'modules';
   let selected = 0;
@@ -40,6 +45,8 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
     selected = Math.min(selected, Math.max(0, listLength() - 1));
   };
 
+  const pendingVersion = () => (offers.suppressed ? null : newerVersion(runtime, ctx));
+
   const draw = () => {
     screen.clear();
     for (const text of renderMenu({
@@ -51,7 +58,8 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
       tokenUntil: formatShortDate(ctx.session.token.expiresAt),
       rows,
       selected,
-      reminder: versionReminder(runtime, ctx.session),
+      reminder: pendingVersion() ? updateMenuLine(pendingVersion() as string) : null,
+      updatePending: pendingVersion() !== null,
       notices,
       message,
       stale: ctx.stale,
@@ -181,12 +189,28 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
     return true;
   };
 
+  const updateNow = async (): Promise<boolean> => {
+    if (!(await refreshSession())) return false;
+    screen.clear();
+    const { progress, summary } = collectingProgress();
+    const outcome = await runUpdateOffer({ runtime, ctx, offers, atLaunch: true, progress, say: line, ask: async () => true });
+    if (outcome === 'updating') updateRequested = true;
+    else message = summary();
+    return true;
+  };
+
   const checkCurrent = async (): Promise<boolean> => {
     if (!(await refreshSession())) return false;
     screen.clear();
     const { progress, summary } = collectingProgress();
+    const asked = await runUpdateOffer({ runtime, ctx, offers, atLaunch: false, progress, say: line });
+    if (asked === 'updating') {
+      updateRequested = true;
+      return true;
+    }
+    const updateNote = asked === 'failed' ? summary() : null;
     const outcome = await checkFlow(runtime, progress);
-    message = outcome ? outcome.result.message : summary();
+    message = withUpdateNote(updateNote, outcome ? outcome.result.message : (summary() ?? ''));
     await waitKey();
     await refreshSession();
     await refreshRows();
@@ -194,7 +218,7 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
   };
 
   await refreshRows();
-  return new Promise<void>((resolve) => {
+  return new Promise<MenuResult>((resolve) => {
     const finish = () => {
       clearInterval(timer);
       process.stdin.off('keypress', onKey);
@@ -202,12 +226,12 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
       process.stdin.pause();
       screen.showCursor();
       write('\n');
-      resolve();
+      resolve(updateRequested ? 'update' : 'quit');
     };
 
     const onKey = async (_chunk: string, key: Key) => {
       if (busy) return;
-      const action = keyAction(key);
+      const action = keyAction(key, pendingVersion() !== null);
       if (action === 'interrupt') {
         finish();
         return;
@@ -225,7 +249,16 @@ export async function runMenu(runtime: Runtime, initial: SessionContext): Promis
         busy = true;
         const alive = await checkCurrent();
         busy = false;
-        if (!alive) {
+        if (!alive || updateRequested) {
+          draw();
+          finish();
+          return;
+        }
+      } else if (action === 'update') {
+        busy = true;
+        const alive = await updateNow();
+        busy = false;
+        if (!alive || updateRequested) {
           draw();
           finish();
           return;

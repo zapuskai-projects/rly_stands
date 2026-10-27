@@ -66,11 +66,11 @@ function composeArgs(runtime: Runtime, profiles: string[], tail: string[]): stri
   ];
 }
 
-function composeEnv(runtime: Runtime): NodeJS.ProcessEnv {
+function composeEnv(runtime: Runtime, version: string = runtime.version): NodeJS.ProcessEnv {
   return {
     ...process.env,
     KIT_HOST_DIR: runtime.hostDir,
-    KIT_VERSION: runtime.version,
+    KIT_VERSION: version,
     KIT_SECRET: readBankSecret(runtime.dataDir) ?? '',
   };
 }
@@ -87,9 +87,9 @@ export function composeUp(
 }
 
 /** Итоговый compose для профилей: сервисы, образы, порты — то, что поднимется. */
-export async function composeConfig(runtime: Runtime, profiles: string[]): Promise<unknown | null> {
+export async function composeConfig(runtime: Runtime, profiles: string[], version: string = runtime.version): Promise<unknown | null> {
   const result = await run('docker', composeArgs(runtime, profiles, ['config', '--format', 'json']), {
-    env: composeEnv(runtime),
+    env: composeEnv(runtime, version),
     cwd: runtime.kitDir,
   });
   if (result.code !== 0) return null;
@@ -137,4 +137,40 @@ export async function resetProfile(profile: string): Promise<boolean> {
   const ids = volumes.stdout.split('\n').filter(Boolean);
   if (!ids.length) return true;
   return (await run('docker', ['volume', 'rm', ...ids])).code === 0;
+}
+
+export type RunningImage = { name: string; image: string; profile: string };
+
+export async function listRunningImages(): Promise<RunningImage[] | null> {
+  const result = await run('docker', ['ps', '--format', `{{.Names}}|{{.Image}}|{{.Label "${MODULE_LABEL}"}}`]);
+  if (result.code !== 0) return null;
+  return result.stdout
+    .split('\n')
+    .filter(Boolean)
+    .map((row) => {
+      const [name = '', image = '', profile = ''] = row.split('|');
+      return { name, image, profile };
+    });
+}
+
+export async function hasImage(image: string): Promise<boolean> {
+  return (await run('docker', ['image', 'inspect', image])).code === 0;
+}
+
+export function pullImage(image: string, onLine: (line: string) => void): Promise<number> {
+  return runStreaming('docker', ['pull', image], onLine);
+}
+
+export const recreateTail = (service: string): string[] => ['up', '-d', '--no-deps', '--force-recreate', service];
+
+export function recreateService(
+  runtime: Runtime,
+  profiles: string[],
+  service: string,
+  onLine: (line: string) => void,
+): Promise<number> {
+  return runStreaming('docker', composeArgs(runtime, profiles, recreateTail(service)), onLine, {
+    env: composeEnv(runtime),
+    cwd: runtime.kitDir,
+  });
 }

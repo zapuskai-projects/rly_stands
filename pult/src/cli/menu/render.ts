@@ -15,6 +15,7 @@ export type MenuView = {
   rows: ModuleRow[];
   selected: number;
   reminder: string | null;
+  updatePending?: boolean;
   notices: string[];
   message: string | null;
   stale: boolean;
@@ -65,6 +66,7 @@ export function renderMenu(view: MenuView): string[] {
   }
   lines.push('', ...renderRows(view.rows, view.selected), '');
   if (view.message) lines.push(` ${view.message}`, '');
-  lines.push(` ${color.dim('↑↓ выбрать · Enter запустить/остановить · Р перезапустить · О остановить все · З задачи · П проверить · В выйти')}`);
+  const update = view.updatePending ? ' · У обновить' : '';
+  lines.push(` ${color.dim(`↑↓ выбрать · Enter запустить/остановить · Р перезапустить · О остановить все${update} · З задачи · П проверить · В выйти`)}`);
   return lines;
 }

@@ -45,7 +45,7 @@ export function versionGate(runtime: Runtime, session: Session): string | null {
 
 export function versionReminder(runtime: Runtime, session: Session): string | null {
   return compareVersions(runtime.version, session.kit.latestVersion) < 0
-    ? `Вышла версия ${session.kit.latestVersion}. ${UPDATE_HINT}`
+    ? `Вышла версия ${session.kit.latestVersion}, обновить: ./stand`
     : null;
 }
 

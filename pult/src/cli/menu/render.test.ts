@@ -66,10 +66,12 @@ describe('renderMenu', () => {
   it('напоминание об обновлении и пометки агента выводятся над таблицей', () => {
     const extended = renderMenu({
       ...view,
-      reminder: 'Вышла версия 0.2.0. Обновите набор: git pull',
+      reminder: 'Вышла версия 0.2.0. Обновить — клавиша У.',
+      updatePending: true,
       notices: ['Kafka: выключен на платформе'],
     }).map(stripAnsi);
-    assert.ok(extended.includes(' Вышла версия 0.2.0. Обновите набор: git pull'));
+    assert.ok(extended.includes(' Вышла версия 0.2.0. Обновить — клавиша У.'));
+    assert.equal(extended.at(-1), ' ↑↓ выбрать · Enter запустить/остановить · Р перезапустить · О остановить все · У обновить · З задачи · П проверить · В выйти');
     assert.ok(extended.includes(' ! Kafka: выключен на платформе'));
   });
 });

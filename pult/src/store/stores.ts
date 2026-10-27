@@ -97,3 +97,20 @@ export function ensureBankSecret(dataDir: string): string {
   writeFileSync(bankSecretPath(dataDir), `${secret}\n`, { mode: 0o600 });
   return secret;
 }
+
+export type UpdateMarker = { version: string; profiles: string[] };
+
+const markerPath = (dataDir: string) => join(dataDir, 'update.json');
+
+export function readUpdateMarker(dataDir: string): UpdateMarker | null {
+  const marker = readJson<{ version: string | null; profiles: string[] }>(markerPath(dataDir), { version: null, profiles: [] });
+  return marker.version ? { version: marker.version, profiles: marker.profiles } : null;
+}
+
+export function writeUpdateMarker(dataDir: string, version: string, profiles: string[] = []): void {
+  writeJson(markerPath(dataDir), { version, profiles });
+}
+
+export function clearUpdateMarker(dataDir: string): void {
+  writeJson(markerPath(dataDir), { version: null, profiles: [] });
+}

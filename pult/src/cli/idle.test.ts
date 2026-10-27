@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
 import type { KitContainer } from '../docker/kit-docker';
 import type { Session, SessionModule, SessionTask } from '../platform/types';
-import { answerOf, idleQuestion, idleToStop, offerStopIdle } from './idle';
+import { answerOf, askYesNo, idleQuestion, idleToStop, offerStopIdle, type AnswerKey } from './idle';
 
 const module = (key: string, requires: string[] = [], withUi = false): SessionModule => ({
   key,
@@ -107,5 +108,60 @@ describe('лишние модули при ручном запуске', () => {
     const pipe = offer(false, true, running('kafka', 'rabbitmq'));
     assert.deepEqual(await offerStopIdle(pipe.options), { asked: false, stopped: [] });
     assert.deepEqual([pipe.calls.asked, pipe.calls.stopped], [[], []]);
+  });
+});
+
+describe('вопрос с клавишей', () => {
+  function fakeInput() {
+    const emitter = new EventEmitter();
+    const modes: boolean[] = [];
+    const input = {
+      isRaw: false,
+      on: (event: 'keypress', handler: (chunk: string, key: AnswerKey) => void) => emitter.on(event, handler),
+      off: (event: 'keypress', handler: (chunk: string, key: AnswerKey) => void) => emitter.off(event, handler),
+      setRawMode: (mode: boolean) => modes.push(mode),
+      resume: () => undefined,
+    };
+    return { input, press: (key: AnswerKey) => emitter.emit('keypress', '', key), modes, listeners: () => emitter.listenerCount('keypress') };
+  }
+
+  it('Ctrl+C на вопросе об обновлении завершает пульт, а не считается ответом «нет»', async () => {
+    const { input, press, listeners } = fakeInput();
+    let interrupted = 0;
+    let answered: boolean | null = null;
+    void askYesNo('Обновить?', { input, out: () => undefined, onInterrupt: () => (interrupted += 1) }).then((value) => (answered = value));
+    press({ ctrl: true, name: 'c' });
+    await Promise.resolve();
+    assert.equal(interrupted, 1);
+    assert.equal(answered, null);
+    assert.equal(listeners(), 0);
+  });
+
+  it('Ctrl+C без обработчика остаётся ответом «нет», как у вопроса про лишние модули', async () => {
+    const { input, press } = fakeInput();
+    const answer = askYesNo('Остановить?', { input, out: () => undefined });
+    press({ ctrl: true, name: 'c' });
+    assert.equal(await answer, false);
+  });
+
+  it('клавиши в первые мгновения не считаются ответом: случайный Enter при загрузке не станет «да»', async () => {
+    const { input, press } = fakeInput();
+    let now = 1000;
+    const answer = askYesNo('Обновить?', { input, out: () => undefined, settleMs: 700, now: () => now });
+    press({ name: 'return' });
+    now += 699;
+    press({ name: 'return' });
+    now += 1;
+    press({ name: 'return' });
+    assert.equal(await answer, true);
+  });
+
+  it('отказ после паузы — «нет»', async () => {
+    const { input, press } = fakeInput();
+    let now = 0;
+    const answer = askYesNo('Обновить?', { input, out: () => undefined, settleMs: 700, now: () => now });
+    now = 800;
+    press({ sequence: 'н' });
+    assert.equal(await answer, false);
   });
 });

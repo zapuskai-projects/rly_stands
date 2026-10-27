@@ -46,5 +46,14 @@ describe('keyAction', () => {
     assert.equal(keyAction({ name: 'h', sequence: 'р' }), 'restart');
     assert.equal(keyAction({ name: 'r', sequence: 'r' }), 'restart');
   });
-});
 
+  it('у — обновить только пока вышла новая версия; о остаётся «остановить все»', () => {
+    assert.equal(keyAction({ name: 'e', sequence: 'у' }, true), 'update');
+    assert.equal(keyAction({ name: 'e', sequence: 'У' }, true), 'update');
+    assert.equal(keyAction({ name: 'u', sequence: 'u' }, true), 'update');
+    assert.equal(keyAction({ name: 'e', sequence: 'у' }, false), null);
+    assert.equal(keyAction({ name: 'u', sequence: 'u' }, false), null);
+    assert.equal(keyAction({ name: 'j', sequence: 'о' }, true), 'stopAll');
+    assert.equal(keyAction({ name: 's', sequence: 's' }, true), 'stopAll');
+  });
+});
