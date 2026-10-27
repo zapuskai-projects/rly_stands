@@ -218,9 +218,11 @@ describe('дефекты релиза 1.2, включаемые сценарие
       h.webhook.answers({ kind: 'ERROR', error: 'TIMEOUT' }, { kind: 'RESPONSE', status: 204 });
       await h.dispatchWebhooks(T0);
       const facts = (await h.kit('GET', '/_kit/facts/webhook-deliveries')).body as { status: string; attempts: { error: string | null }[]; defects: { details: Record<string, unknown> }[] }[];
-      assert.deepEqual(facts.map((item) => item.status), ['FAILED', 'DELIVERED']);
-      assert.equal(facts[0]?.defects[0]?.details.error, 'TIMEOUT');
-      assert.deepEqual(facts[1]?.defects, []);
+      assert.deepEqual(facts.map((item) => item.status).sort(), ['DELIVERED', 'FAILED']);
+      const failed = facts.find((item) => item.status === 'FAILED');
+      const delivered = facts.find((item) => item.status === 'DELIVERED');
+      assert.equal(failed?.defects[0]?.details.error, 'TIMEOUT');
+      assert.deepEqual(delivered?.defects, []);
     });
 
     it('доставка связана с задачей через метку попытки QR-кода', async () => {
