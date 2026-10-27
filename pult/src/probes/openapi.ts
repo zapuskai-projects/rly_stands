@@ -294,7 +294,7 @@ export const OPENAPI_EXECUTORS: ExecutorTable = {
 
   'openapi.lint': executor<{ file: string }>(async ({ file }, ctx) => {
     if (workSize(ctx, file) === null) {
-      return { errors: 1, warnings: 0, problems: [{ severity: 'error', rule: 'file', message: missingFile(file), location: '' }] };
+      return { errors: 1, warnings: 0, problems: [{ severity: 'error', rule: 'file', message: missingFile(file, ctx), location: '' }] };
     }
     return lintOpenApi(workPath(ctx, file));
   }),
@@ -305,7 +305,7 @@ export const OPENAPI_EXECUTORS: ExecutorTable = {
 
   'openapi.breaking': executor<{ file: string; baseFile: string }>(async ({ file, baseFile }, ctx) => {
     for (const name of [file, baseFile]) {
-      if (workSize(ctx, name) === null) return { count: 0, breaking: [], error: missingFile(name) };
+      if (workSize(ctx, name) === null) return { count: 0, breaking: [], error: missingFile(name, ctx) };
     }
     return breaking(workPath(ctx, baseFile), workPath(ctx, file));
   }),

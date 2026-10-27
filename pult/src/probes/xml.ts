@@ -70,13 +70,13 @@ export async function checkXsdSamples(xsdFile: string, samples: XmlSample[]) {
 
 export const XML_EXECUTORS: ExecutorTable = {
   'xml.xpath': executor<{ file: string; xpath: string }>(async ({ file, xpath }, ctx) => {
-    if (workSize(ctx, file) === null) return { parsed: false, count: 0, values: [], errors: [missingFile(file)] };
+    if (workSize(ctx, file) === null) return { parsed: false, count: 0, values: [], errors: [missingFile(file, ctx)] };
     return xpathValues(workPath(ctx, file), xpath);
   }),
 
   'xsd.samples': executor<{ xsdFile: string; samples: XmlSample[] }>(async ({ xsdFile, samples }, ctx) => {
     if (workSize(ctx, xsdFile) === null) {
-      return summarize(samples.map((sample, index) => ({ ...sampleOutcome(index, sample.expectValid, false, [missingFile(xsdFile)]), ok: false })));
+      return summarize(samples.map((sample, index) => ({ ...sampleOutcome(index, sample.expectValid, false, [missingFile(xsdFile, ctx)]), ok: false })));
     }
     return checkXsdSamples(workPath(ctx, xsdFile), samples);
   }),

@@ -2,7 +2,7 @@ import { parse } from 'yaml';
 import { errorText } from './errors';
 import { asRecord } from './http';
 import type { ProbeContext } from './types';
-import { missingFile, readWorkText } from './work';
+import { missingFile, readWorkText, richTextProblem } from './work';
 
 export type LoadedDocument =
   | { ok: true; text: string; doc: Record<string, unknown> }
@@ -22,8 +22,9 @@ export function parseDocumentText(text: string): LoadedDocument {
 
 export function loadDocument(ctx: ProbeContext, file: string): LoadedDocument {
   const text = readWorkText(ctx, file);
-  if (text === null) return { ok: false, errors: [missingFile(file)] };
-  return parseDocumentText(text);
+  if (text === null) return { ok: false, errors: [missingFile(file, ctx)] };
+  const richText = richTextProblem(text, file);
+  return richText ? { ok: false, errors: [richText] } : parseDocumentText(text);
 }
 
 export function resolveRef(doc: Record<string, unknown>, node: unknown, depth = 0): unknown {

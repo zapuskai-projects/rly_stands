@@ -146,7 +146,7 @@ export async function checkAsyncApiSamples(text: string, channel: string | undef
 export const ASYNCAPI_EXECUTORS: ExecutorTable = {
   'asyncapi.describe': executor<{ file: string }>(async ({ file }, ctx) => {
     const text = readWorkText(ctx, file);
-    if (text === null) return failed([missingFile(file)]);
+    if (text === null) return failed([missingFile(file, ctx)]);
     try {
       return await describeAsyncApi(text);
     } catch (error) {
@@ -157,7 +157,7 @@ export const ASYNCAPI_EXECUTORS: ExecutorTable = {
   'asyncapi.samples': executor<{ file: string; channel?: string; samplesFrom: SamplesFrom }>(async ({ file, channel, samplesFrom }, ctx) => {
     const samples = samplesFromObservation(ctx.observations, samplesFrom);
     const text = readWorkText(ctx, file);
-    if (text === null) return unparsed(samples, [missingFile(file)]);
+    if (text === null) return unparsed(samples, [missingFile(file, ctx)]);
     try {
       return await checkAsyncApiSamples(text, channel, samples);
     } catch (error) {

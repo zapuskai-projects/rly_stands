@@ -118,11 +118,11 @@ function prepare(dir: string, name: string, source: string): string {
 export const GRPC_EXECUTORS: ExecutorTable = {
   'grpc.protoDescribe': executor<{ file: string }>(async ({ file }, ctx) => {
     const text = readWorkText(ctx, file);
-    return text === null ? failed([missingFile(file)]) : describeProto(text);
+    return text === null ? failed([missingFile(file, ctx)]) : describeProto(text);
   }),
 
   'grpc.protoLint': executor<{ file: string }>(async ({ file }, ctx) => {
-    if (workSize(ctx, file) === null) return { count: 1, problems: [{ line: 0, rule: 'FILE', message: missingFile(file) }] };
+    if (workSize(ctx, file) === null) return { count: 1, problems: [{ line: 0, rule: 'FILE', message: missingFile(file, ctx) }] };
     const dir = mkdtempSync(join(tmpdir(), 'kit-buf-'));
     try {
       const module = prepare(dir, 'current', workPath(ctx, file));
@@ -134,7 +134,7 @@ export const GRPC_EXECUTORS: ExecutorTable = {
 
   'grpc.protoBreaking': executor<{ file: string; baseProto: string }>(async ({ file, baseProto }, ctx) => {
     for (const name of [file, baseProto]) {
-      if (workSize(ctx, name) === null) return { count: 1, problems: [{ line: 0, rule: 'FILE', message: missingFile(name) }] };
+      if (workSize(ctx, name) === null) return { count: 1, problems: [{ line: 0, rule: 'FILE', message: missingFile(name, ctx) }] };
     }
     const dir = mkdtempSync(join(tmpdir(), 'kit-buf-'));
     try {

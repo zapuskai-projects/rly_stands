@@ -21,6 +21,7 @@ function authOf(runtime: Runtime): PlatformAuth | null {
 function probeContext(runtime: Runtime, label: string, auth?: PlatformAuth | null, attemptId?: string): ProbeContext {
   return {
     workDir: join(runtime.kitDir, 'work'),
+    hostWorkDir: join(runtime.hostDir, 'work'),
     label,
     dataDir: runtime.dataDir,
     results: {},

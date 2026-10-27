@@ -1,5 +1,5 @@
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { ProbeError } from './errors';
 import type { ProbeContext } from './types';
 
@@ -39,8 +39,42 @@ export function writeWorkText(ctx: ProbeContext, relative: string, content: stri
   writeFileSync(target, content, 'utf8');
 }
 
-export function missingFile(relative: string): string {
-  return `файла work/${relative} нет — сохраните его под этим именем в папке work набора (rly_stands/work)`;
+const SHOWN_NEIGHBOURS = 8;
+const RTF_MARK = '{\\rtf';
+
+function neighbours(ctx: ProbeContext, relative: string): string[] {
+  try {
+    return readdirSync(dirname(workPath(ctx, relative)))
+      .filter((name) => !name.startsWith('.'))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Файла нет: где пульт его ищет, что лежит рядом, и не спрятал ли Mac расширение. */
+export function missingFile(relative: string, ctx?: ProbeContext): string {
+  const base = `файла work/${relative} нет`;
+  if (!ctx) return `${base} — сохраните его под этим именем в папке work набора (rly_stands/work)`;
+  const name = basename(relative);
+  const names = neighbours(ctx, relative);
+  const lowered = name.toLowerCase();
+  const lookalike = names.find((item) => item !== name && item.toLowerCase().startsWith(lowered));
+  if (lookalike) {
+    return `${base}, но есть ${lookalike}: Mac дописал расширение или имя отличается регистром. Переименуйте файл ровно в ${name}`;
+  }
+  const folder = ctx.hostWorkDir ?? 'rly_stands/work';
+  const shown = names.slice(0, SHOWN_NEIGHBOURS).join(', ');
+  const more = names.length > SHOWN_NEIGHBOURS ? ` и ещё ${names.length - SHOWN_NEIGHBOURS}` : '';
+  const listing = names.length ? `сейчас в ней: ${shown}${more}` : 'она пустая';
+  return `${base}. Пульт ищет его в папке ${folder} — ${listing}. Сохраните файл под этим именем в эту папку`;
+}
+
+/** Файл сохранён как форматированный текст (TextEdit): имя верное, внутри не текст. */
+export function richTextProblem(text: string, relative: string): string | null {
+  return text.trimStart().startsWith(RTF_MARK)
+    ? `файл work/${relative} сохранён как форматированный текст (RTF). В TextEdit выберите «Формат → Конвертировать в простой текст» и сохраните заново, или откройте файл в VS Code`
+    : null;
 }
 
 const SKIPPED_DIRS = new Set(['node_modules']);

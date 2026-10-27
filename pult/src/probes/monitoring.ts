@@ -179,7 +179,7 @@ export const MONITORING_EXECUTORS: ExecutorTable = {
 
   'prometheus.queryFile': executor<{ file: string }>(async ({ file }, ctx) => {
     const text = readWorkText(ctx, file);
-    if (text === null) return { series: 0, value: null, queryError: missingFile(file), queries: [] };
+    if (text === null) return { series: 0, value: null, queryError: missingFile(file, ctx), queries: [] };
     if (!text.trim()) return { series: 0, value: null, queryError: `файл work/${file} пуст`, queries: [] };
     return queriesOfFile(text);
   }),

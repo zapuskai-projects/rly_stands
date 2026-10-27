@@ -5,8 +5,8 @@ import { parseClasses } from '../plantuml/classes';
 import { parseSequence } from '../plantuml/sequence';
 import { INITIAL_MARK, parseState } from '../plantuml/state';
 import { http } from './http';
-import { executor, type ExecutorTable } from './types';
-import { missingFile, readWorkText } from './work';
+import { executor, type ExecutorTable, type ProbeContext } from './types';
+import { missingFile, readWorkText, richTextProblem } from './work';
 
 const MODULE = 'PlantUML-сервер';
 const SERVER = 'http://plantuml:8080/txt';
@@ -108,37 +108,40 @@ export function c4Facts(source: string) {
 }
 
 async function diagramProbe<T extends { syntaxErrors: string[] }>(
-  source: string | null,
+  ctx: ProbeContext,
   file: string,
   facts: (text: string) => T,
   empty: Omit<T, 'title' | 'syntaxErrors'>,
 ) {
-  if (source === null) return { title: '', syntaxErrors: [missingFile(file)], ...empty };
+  const source = readWorkText(ctx, file);
+  if (source === null) return { title: '', syntaxErrors: [missingFile(file, ctx)], ...empty };
+  const richText = richTextProblem(source, file);
+  if (richText) return { title: '', syntaxErrors: [richText], ...empty };
   const own = facts(source);
   return { ...own, syntaxErrors: [...own.syntaxErrors, ...(await serverErrors(source))] };
 }
 
 export const DIAGRAM_EXECUTORS: ExecutorTable = {
   'plantuml.sequence': executor<{ file: string }>(({ file }, ctx) =>
-    diagramProbe(readWorkText(ctx, file), file, sequenceFacts, { participants: [], participantsText: '', messages: [], targetsText: '', flowText: '', blocks: [], text: '' }),
+    diagramProbe(ctx, file, sequenceFacts, { participants: [], participantsText: '', messages: [], targetsText: '', flowText: '', blocks: [], text: '' }),
   ),
 
   'plantuml.class': executor<{ file: string }>(({ file }, ctx) =>
-    diagramProbe(readWorkText(ctx, file), file, classFacts, { classes: [], relations: [], linkPairs: [] }),
+    diagramProbe(ctx, file, classFacts, { classes: [], relations: [], linkPairs: [] }),
   ),
 
   'plantuml.state': executor<{ file: string }>(({ file }, ctx) =>
-    diagramProbe(readWorkText(ctx, file), file, stateFacts, { states: [], transitions: [], transitionsWithoutFinal: [], edges: [] }),
+    diagramProbe(ctx, file, stateFacts, { states: [], transitions: [], transitionsWithoutFinal: [], edges: [] }),
   ),
 
   'plantuml.c4': executor<{ file: string }>(({ file }, ctx) =>
-    diagramProbe(readWorkText(ctx, file), file, c4Facts, { elements: [], relations: [], relationsText: '', elementsText: '' }),
+    diagramProbe(ctx, file, c4Facts, { elements: [], relations: [], relationsText: '', elementsText: '' }),
   ),
 
   'bpmn.file': executor<{ file: string }>(async ({ file }, ctx) => {
     const text = readWorkText(ctx, file);
     return text === null
-      ? { parsed: false, errors: [missingFile(file)], processIds: [], counts: {}, elements: [], flows: [], participants: [], lanes: [] }
+      ? { parsed: false, errors: [missingFile(file, ctx)], processIds: [], counts: {}, elements: [], flows: [], participants: [], lanes: [] }
       : parseBpmn(text);
   }),
 };
