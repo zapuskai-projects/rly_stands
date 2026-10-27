@@ -101,4 +101,11 @@ jobs:
       - run: npx eslint web/src
       - run: npm run build
       - run: npm run test:unit
-      - run: npm test
+      - name: Все тесты банка
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test.log
+      - name: Упавшие тесты банка
+        if: failure()
+        run: |
+          awk '/failing tests:/{f=1} f' test.log | grep -E '^(test at|✖|  [A-Za-z]*Error|    (actual|expected):)' | head -40 | while IFS= read -r row; do echo "::error::$row"; done
