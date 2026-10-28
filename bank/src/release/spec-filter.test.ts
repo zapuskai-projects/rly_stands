@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 import { parse } from 'yaml';
 import { PROBE_ASYNCAPI, PROBE_OPENAPI } from '../testing/release-spec';
@@ -30,6 +32,28 @@ function danglingRefs(document: Json): string[] {
 }
 
 describe('контракт для текущего релиза', () => {
+  it('служебный параметр (x-internal) не виден ни в одной операции и уходит из компонентов', () => {
+    const spec = {
+      openapi: '3.1.0',
+      paths: { '/a': { get: { parameters: [{ $ref: '#/components/parameters/Label' }, { $ref: '#/components/parameters/Key' }], responses: { '200': { description: 'ok' } } } } },
+      components: {
+        parameters: {
+          Label: { name: 'X-Attempt-Label', in: 'header', 'x-internal': true, schema: { type: 'string' } },
+          Key: { name: 'Idempotency-Key', in: 'header', schema: { type: 'string' } },
+        },
+      },
+    };
+    const filtered = filterSpec(spec, '1.2') as { paths: { '/a': { get: { parameters: unknown[] } } }; components: { parameters: Record<string, unknown> } };
+    assert.deepEqual(filtered.paths['/a'].get.parameters, [{ $ref: '#/components/parameters/Key' }]);
+    assert.deepEqual(Object.keys(filtered.components.parameters), ['Key']);
+  });
+
+  it('настоящий контракт банка не показывает метку попытки', () => {
+    const served = specForRelease(readFileSync(path.join(__dirname, '../../docs/openapi.yaml'), 'utf8'), '1.2');
+    assert.equal(served.includes('X-Attempt-Label'), false);
+    assert.ok(served.includes('Idempotency-Key'));
+  });
+
   it('на 1.0 операции следующего релиза, их ответы и схемы вырезаны', () => {
     const document = openapi('1.0');
     assert.deepEqual(Object.keys(dig<Json>(document, 'paths')), ['/api/v1/ping']);

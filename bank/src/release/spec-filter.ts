@@ -5,29 +5,41 @@ type Json = Record<string, unknown>;
 
 const MARK = 'x-release';
 const VALUES_MARK = 'x-release-values';
+const INTERNAL_MARK = 'x-internal';
 const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'];
 const COMPONENT_REF = /^#\/components\/([^/]+)\/([^/]+)/;
 
 const isObject = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
 
-function isHidden(node: unknown, current: Release): boolean {
-  if (!isObject(node) || node[MARK] === undefined) return false;
+function isHidden(node: unknown, current: Release, internal: Set<string>): boolean {
+  if (!isObject(node)) return false;
+  if (typeof node.$ref === 'string' && internal.has(node.$ref)) return true;
+  if (node[MARK] === undefined) return false;
   return !releaseAtLeast(current, parseRelease(String(node[MARK]), MARK));
 }
 
-function cut(node: unknown, current: Release): unknown {
-  if (Array.isArray(node)) return node.filter((item) => !isHidden(item, current)).map((item) => cut(item, current));
+function internalRefs(document: Json): Set<string> {
+  const parameters = isObject(document.components) && isObject(document.components.parameters) ? document.components.parameters : {};
+  return new Set(
+    Object.entries(parameters)
+      .filter(([, value]) => isObject(value) && value[INTERNAL_MARK] === true)
+      .map(([name]) => `#/components/parameters/${name}`),
+  );
+}
+
+function cut(node: unknown, current: Release, internal: Set<string>): unknown {
+  if (Array.isArray(node)) return node.filter((item) => !isHidden(item, current, internal)).map((item) => cut(item, current, internal));
   if (!isObject(node)) return node;
   const result: Json = {};
   for (const [key, value] of Object.entries(node)) {
-    if (!isHidden(value, current)) result[key] = cut(value, current);
+    if (!isHidden(value, current, internal)) result[key] = cut(value, current, internal);
   }
   if (Array.isArray(node.oneOf) && Array.isArray(result.oneOf) && result.oneOf.length === 1 && node.oneOf.length > 1) {
     const { oneOf, ...rest } = result;
     return { ...rest, ...(oneOf[0] as Json) };
   }
   if (isObject(node.properties) && Array.isArray(result.required)) {
-    const hidden = Object.entries(node.properties).filter(([, value]) => isHidden(value, current)).map(([name]) => name);
+    const hidden = Object.entries(node.properties).filter(([, value]) => isHidden(value, current, internal)).map(([name]) => name);
     result.required = result.required.filter((name) => !hidden.includes(String(name)));
   }
   cutEnumValues(node, result, current);
@@ -96,7 +108,7 @@ function dropOrphanComponents(original: Json, filtered: Json): void {
 }
 
 export function filterSpec(document: Json, current: Release): Json {
-  const filtered = cut(document, current) as Json;
+  const filtered = cut(document, current, internalRefs(document)) as Json;
   dropEmptyPaths(document, filtered);
   dropOrphanComponents(document, filtered);
   return filtered;

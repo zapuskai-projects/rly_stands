@@ -1537,6 +1537,7 @@ components:
       name: X-Attempt-Label
       in: header
       required: false
+      x-internal: true
       description: Метка попытки. Записывается в журнал запросов банка.
       schema:
         type: string
