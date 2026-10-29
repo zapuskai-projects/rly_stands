@@ -183,4 +183,15 @@ describe('ER-диаграмма: entity, ключи и связи с кратн�
       ],
     );
   });
+
+  it('выделение имени поля не меняет имя ключа и обязательность', () => {
+    for (const prefix of ['', '- ', '* ']) {
+      const diagram = parseClasses(`entity clients {\n${prefix}**id** : uuid <<PK>>\n${prefix}**tariff_code** : text <<FK>>\n}`);
+      assert.deepEqual(diagram.errors, []);
+      assert.deepEqual(diagram.classes[0]?.attributes, [
+        { name: 'id', type: 'uuid', visibility: prefix === '- ' ? '-' : null, pk: true, fk: false, mandatory: prefix === '* ' },
+        { name: 'tariff_code', type: 'text', visibility: prefix === '- ' ? '-' : null, pk: false, fk: true, mandatory: prefix === '* ' },
+      ]);
+    }
+  });
 });

@@ -65,7 +65,7 @@ const STEREOTYPE = /<<([^>]*)>>/g;
 
 function parseEntityField(text: string): ClassAttribute {
   let body = text.trim();
-  const mandatory = body.startsWith('*');
+  const mandatory = body.startsWith('*') && !body.startsWith('**');
   if (mandatory) body = body.slice(1).trim();
   const stereotypes = [...body.matchAll(STEREOTYPE)].map((match) => match[1] ?? '').join(' ');
   body = body.replace(STEREOTYPE, '').trim();
@@ -78,7 +78,7 @@ function parseEntityField(text: string): ClassAttribute {
       ? [body.slice(0, colon).trim(), body.slice(colon + 1).trim()]
       : [body.split(/\s+/)[0] ?? '', body.split(/\s+/).slice(1).join(' ')];
   return {
-    name,
+    name: name.replace(/^\*\*([^*]+)\*\*$/, '$1'),
     type: type || null,
     visibility,
     pk: /\bPK\b/i.test(stereotypes),
