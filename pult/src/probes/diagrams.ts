@@ -85,13 +85,19 @@ export function classFacts(source: string) {
 
 export function stateFacts(source: string) {
   const parsed = parseState(source);
+  const codes = new Map(parsed.states.map((state) => [state.name, state.alias]));
+  const code = (name: string | null) => name === null ? null : (codes.get(name) ?? name);
+  const states = parsed.states.map((state) => state.alias === state.name
+    ? { ...state, parent: code(state.parent) }
+    : { ...state, name: state.alias, displayName: state.name, parent: code(state.parent) });
+  const transitions = parsed.transitions.map((item) => ({ ...item, from: code(item.from)!, to: code(item.to)!, scope: code(item.scope) }));
   return {
     title: extractTitle(source),
     syntaxErrors: parsed.errors,
-    states: parsed.states,
-    transitions: parsed.transitions,
-    transitionsWithoutFinal: parsed.transitions.filter((item) => item.to !== INITIAL_MARK),
-    edges: parsed.transitions.map((item) => `${item.from} -> ${item.to}`),
+    states,
+    transitions,
+    transitionsWithoutFinal: transitions.filter((item) => item.to !== INITIAL_MARK),
+    edges: transitions.map((item) => `${item.from} -> ${item.to}`),
   };
 }
 

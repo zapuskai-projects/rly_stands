@@ -73,6 +73,7 @@ export async function pingPlatform(platformUrl: string): Promise<PingResult> {
 export type PlatformAuth = { platformUrl: string; token: string; kitVersion: string };
 
 const CALL_TIMEOUT_MS = 60_000;
+const CHECK_TIMEOUT_MS = 300_000;
 
 function messageOf(body: unknown, fallback: string): string {
   const message = (body as { message?: unknown } | null)?.message;
@@ -83,7 +84,7 @@ function messageOf(body: unknown, fallback: string): string {
 async function call<T>(
   auth: PlatformAuth,
   path: string,
-  init: { method: 'GET' | 'POST' | 'PUT'; body?: unknown; primitives?: string[] },
+  init: { method: 'GET' | 'POST' | 'PUT'; body?: unknown; primitives?: string[]; timeoutMs?: number },
 ): Promise<PlatformCall<T>> {
   try {
     const response = await fetch(`${auth.platformUrl}/api/stand-kit${path}`, {
@@ -95,7 +96,7 @@ async function call<T>(
         ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(init.timeoutMs ?? CALL_TIMEOUT_MS),
     });
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok) {
@@ -103,6 +104,9 @@ async function call<T>(
     }
     return { ok: true, value: body as T };
   } catch (error) {
+    if (init.timeoutMs === CHECK_TIMEOUT_MS && error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) {
+      return { ok: false, status: 0, message: 'Проверка не ответила за отведённое время. Результат может появиться позже — откройте задачу на платформе.' };
+    }
     return { ok: false, status: 0, message: `Платформа недоступна: ${describeNetworkError(error, auth.platformUrl)}` };
   }
 }
@@ -115,6 +119,7 @@ export function checkAttempt(auth: PlatformAuth, attemptId: string, observations
   return call<CheckOutcome>(auth, `/attempts/${encodeURIComponent(attemptId)}/check`, {
     method: 'POST',
     body: { observations },
+    timeoutMs: CHECK_TIMEOUT_MS,
   });
 }
 

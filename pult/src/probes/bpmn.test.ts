@@ -111,10 +111,27 @@ describe('parseBpmn: процесс с таймерами', () => {
       attachedTo: 'operatorReview',
       interrupting: true,
       timer: 'PT30M',
+      durationSeconds: 1800,
     });
     assert.equal(byId('seniorTimer')?.interrupting, false);
-    assert.deepEqual(byId('operatorReview')?.boundaryTimer, { timer: 'PT30M', interrupting: true });
-    assert.deepEqual(byId('seniorReview')?.boundaryTimer, { timer: 'PT30M', interrupting: false });
+    assert.deepEqual(byId('operatorReview')?.boundaryTimer, { timer: 'PT30M', durationSeconds: 1800, interrupting: true });
+    assert.deepEqual(byId('seniorReview')?.boundaryTimer, { timer: 'PT30M', durationSeconds: 1800, interrupting: false });
+  });
+
+  it('фиксированные часы, минуты и секунды эквивалентны; 29 минут отличаются', () => {
+    for (const [timer, expected] of [['PT30M', 1800], ['PT1800S', 1800], ['PT0H30M0S', 1800], ['PT29M', 1740]] as const) {
+      const model = parseBpmn(REVIEW.replaceAll('PT30M', timer));
+      assert.equal(model.elements.find((item) => item.id === 'operatorReview')?.boundaryTimer?.durationSeconds, expected);
+      assert.equal(model.elements.find((item) => item.id === 'operatorReview')?.boundaryTimer?.timer, timer);
+    }
+  });
+
+  it('дата, цикл, месяцы и непонятная длительность не получают фиксированные секунды', () => {
+    for (const [kind, timer] of [['timeDate', '2026-10-30T12:00:00Z'], ['timeCycle', 'R3/PT30M'], ['timeDuration', 'P1M'], ['timeDuration', 'later']] as const) {
+      const xml = REVIEW.replaceAll('<bpmn:timeDuration>PT30M</bpmn:timeDuration>', `<bpmn:${kind}>${timer}</bpmn:${kind}>`);
+      const model = parseBpmn(xml);
+      assert.equal(model.elements.find((item) => item.id === 'operatorReview')?.boundaryTimer?.durationSeconds, null);
+    }
   });
 
   it('у шлюза считаются исходящие потоки', () => {

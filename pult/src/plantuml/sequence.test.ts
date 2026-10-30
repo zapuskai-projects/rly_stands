@@ -103,6 +103,23 @@ end`);
     assert.deepEqual(reversed.messages[0], { from: 'B', to: 'A', label: 'ответ', async: false, reply: false, block: null });
   });
 
+  it('цветные стрелки сохраняют сообщения, направление и подписи', () => {
+    for (const arrow of ['-[#blue]>', '-[#00AEEF]>']) {
+      const parsed = parseSequence(`A ${arrow} B: запрос\nB --[#blue]> A: ответ`);
+      assert.deepEqual(parsed.messages.map((m) => [m.from, m.to, m.label, m.reply]), [
+        ['A', 'B', 'запрос', false], ['B', 'A', 'ответ', true],
+      ]);
+      assert.deepEqual(parsed.errors, []);
+    }
+  });
+
+  it('удалённое и переставленное сообщение меняет последовательность', () => {
+    const source = 'A -[#blue]> B: запрос\nB --[#blue]> A: ответ';
+    const messages = (text: string) => parseSequence(text).messages.map((m) => [m.from, m.to, m.label]);
+    assert.notDeepEqual(messages(source), messages('A -[#blue]> B: запрос'));
+    assert.notDeepEqual(messages(source), messages('B --[#blue]> A: ответ\nA -[#blue]> B: запрос'));
+  });
+
   it('участник с подписью и псевдонимом: в сообщениях и проверках он под псевдонимом, подпись остаётся именем', () => {
     const labelled = parseSequence('participant "Юрист" as lawyer\nactor Инициатор as initiator\nlawyer -> initiator: ответ\n"Юрист" -> initiator: ещё\ninitiator -> lawyer: вопрос');
     assert.deepEqual(labelled.participants, [

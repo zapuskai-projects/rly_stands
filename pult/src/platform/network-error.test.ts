@@ -1,8 +1,50 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { describeNetworkError } from './network-error';
+import { checkAttempt, fetchAttemptProbes } from './client';
 
 const PLATFORM = 'https://api.education.zapuskai.com';
+const AUTH = { platformUrl: PLATFORM, token: 'test-token', kitVersion: '0.1.14' };
+
+describe('ожидание проверки задачи', () => {
+  it('медленная проверка завершается, обычный запрос сохраняет короткий предел ожидания', async (context) => {
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    context.mock.method(AbortSignal, 'timeout', (milliseconds: number) => timeout(milliseconds / 1000));
+    context.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(new Response(JSON.stringify({ status: 'PASSED' }))), 80);
+        init.signal?.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(init.signal?.reason);
+        }, { once: true });
+      }),
+    );
+    const checked = await checkAttempt(AUTH, 'attempt', {});
+    assert.equal(checked.ok, true);
+    if (checked.ok) assert.equal(checked.value.status, 'PASSED');
+    const probes = await fetchAttemptProbes(AUTH, 'attempt');
+    assert.equal(probes.ok, false);
+  });
+
+  it('тайм-аут проверки объясняет ожидание результата, сбой сети остаётся сбоем сети', async (context) => {
+    context.mock.method(globalThis, 'fetch', async () => {
+      throw new DOMException('timeout', 'TimeoutError');
+    });
+    const pending = await checkAttempt(AUTH, 'attempt', {});
+    assert.equal(pending.ok, false);
+    if (!pending.ok) {
+      assert.match(pending.message, /Результат может появиться позже/);
+      assert.doesNotMatch(pending.message, /Платформа недоступна/);
+    }
+    context.mock.restoreAll();
+    context.mock.method(globalThis, 'fetch', async () => {
+      throw fetchFailure('ENOTFOUND', 'getaddrinfo ENOTFOUND api.education.zapuskai.com');
+    });
+    const failed = await checkAttempt(AUTH, 'attempt', {});
+    assert.equal(failed.ok, false);
+    if (!failed.ok) assert.match(failed.message, /ENOTFOUND/);
+  });
+});
 
 function fetchFailure(code: string, message: string): TypeError {
   return new TypeError('fetch failed', { cause: Object.assign(new Error(message), { code }) });

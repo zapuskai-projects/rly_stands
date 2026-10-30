@@ -149,20 +149,24 @@ export function describeOpenApi(loaded: LoadedDocument) {
   if (!isOpenApi(doc)) {
     return { ...failedLoad({ ok: false, errors: ['нет поля openapi — это не OpenAPI 3-файл'] }) };
   }
-  const info = asRecord(doc.info);
-  const methods = describeMethods(doc);
-  return {
-    parsed: true,
-    errors: [],
-    info: { title: str(info.title), version: str(info.version) },
-    methods,
-    schemas: describeSchemas(doc),
-    securitySchemes: securitySchemes(doc),
-    methodsWithoutHeaderKey: methods
-      .filter((method) => !(method.keyHeaders as string[]).length)
-      .map((method) => `${str(method.method).toUpperCase()} ${str(method.path)}`),
-    notifications: describeNotifications(doc),
-  };
+  try {
+    const info = asRecord(doc.info);
+    const methods = describeMethods(doc);
+    return {
+      parsed: true,
+      errors: [],
+      info: { title: str(info.title), version: str(info.version) },
+      methods,
+      schemas: describeSchemas(doc),
+      securitySchemes: securitySchemes(doc),
+      methodsWithoutHeaderKey: methods
+        .filter((method) => !(method.keyHeaders as string[]).length)
+        .map((method) => `${str(method.method).toUpperCase()} ${str(method.path)}`),
+      notifications: describeNotifications(doc),
+    };
+  } catch (error) {
+    return failedLoad({ ok: false, errors: [(error as Error).message] });
+  }
 }
 
 function pointerOf(...segments: string[]): string {

@@ -1,6 +1,6 @@
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 
-export type BoundaryTimer = { timer: string; interrupting: boolean };
+export type BoundaryTimer = { timer: string; durationSeconds: number | null; interrupting: boolean };
 export type BpmnElement = {
   id: string;
   type: string;
@@ -10,6 +10,7 @@ export type BpmnElement = {
   attachedTo?: string;
   interrupting?: boolean;
   timer?: string | null;
+  durationSeconds?: number | null;
   outgoing?: number;
 };
 export type BpmnFlow = { id: string; from: string; to: string; condition: string | null };
@@ -110,6 +111,17 @@ function timerOf(children: Entry[]): string | null {
   return null;
 }
 
+function durationSecondsOf(children: Entry[]): number | null {
+  const definition = children.find((child) => tagOf(child) === 'timerEventDefinition');
+  if (!definition) return null;
+  const duration = childrenOf(definition, 'timerEventDefinition').find((child) => tagOf(child) === 'timeDuration');
+  if (!duration) return null;
+  const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(textOf(childrenOf(duration, 'timeDuration')));
+  if (!match || !match.slice(1).some((part) => part !== undefined)) return null;
+  const seconds = Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
+  return Number.isSafeInteger(seconds) ? seconds : null;
+}
+
 function actorsOf(entry: Entry): string[] {
   const groups = attr(entry, 'candidateGroups')
     .split(',')
@@ -126,6 +138,7 @@ function describeElement(entry: Entry, tag: string, children: Entry[]): BpmnElem
     element.attachedTo = attr(entry, 'attachedToRef');
     element.interrupting = attr(entry, 'cancelActivity') !== 'false';
     element.timer = timerOf(children);
+    element.durationSeconds = durationSecondsOf(children);
   }
   return element;
 }
@@ -139,7 +152,7 @@ function finishModel(model: BpmnModel): void {
   }
   for (const boundary of model.elements.filter((item) => item.type === 'boundaryEvent' && item.timer)) {
     const task = model.elements.find((item) => item.id === boundary.attachedTo && item.type === 'userTask');
-    if (task) task.boundaryTimer = { timer: boundary.timer as string, interrupting: boundary.interrupting === true };
+    if (task) task.boundaryTimer = { timer: boundary.timer as string, durationSeconds: boundary.durationSeconds ?? null, interrupting: boundary.interrupting === true };
   }
 }
 

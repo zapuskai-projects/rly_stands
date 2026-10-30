@@ -55,7 +55,7 @@ const BLOCKS: BlockKind[] = ['alt', 'opt', 'loop', 'par', 'break', 'critical', '
 const NAME = '"[^"]+"|[\\p{L}\\p{N}_.]+';
 const DECLARATION = new RegExp(`^(${KINDS.join('|')})\\s+(${NAME})(?:\\s+as\\s+(${NAME}))?`, 'iu');
 const MESSAGE = new RegExp(
-  `^(${NAME})\\s*(<{1,2}-{1,2}|-{1,2}>{1,2}|-{1,2}>x|-{1,2}\\\\\\\\?|-{1,2}/)\\s*(${NAME})\\s*(?::\\s*(.*))?$`,
+  `^(${NAME})\\s*(<{1,2}-{1,2}|-{1,2}\\[#[A-Za-z0-9]+\\]>|-{1,2}>{1,2}|-{1,2}>x|-{1,2}\\\\\\\\?|-{1,2}/)\\s*(${NAME})\\s*(?::\\s*(.*))?$`,
   'u',
 );
 const BLOCK_OPEN = new RegExp(`^(${BLOCKS.join('|')})\\b\\s*(.*)$`, 'i');

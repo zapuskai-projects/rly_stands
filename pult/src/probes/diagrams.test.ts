@@ -118,6 +118,17 @@ describe('факты диаграмм', () => {
     assert.equal(facts.transitions[1]?.label, 'принят');
     assert.deepEqual(facts.syntaxErrors, []);
   });
+
+  it('алиас состояния остаётся кодом в фактах, подпись сохраняется отдельно', () => {
+    const facts = stateFacts('@startuml\nstate "Действует" as ACTIVE\nstate "Пауза" as PAUSED\n[*] --> ACTIVE\nACTIVE --> PAUSED\nPAUSED --> ACTIVE\n@enduml');
+    assert.deepEqual(facts.states.map((state) => [state.name, 'displayName' in state ? state.displayName : null]), [
+      ['ACTIVE', 'Действует'], ['PAUSED', 'Пауза'],
+    ]);
+    assert.deepEqual(facts.edges, ['[*] -> ACTIVE', 'ACTIVE -> PAUSED', 'PAUSED -> ACTIVE']);
+    assert.deepEqual(facts.transitions.map((item) => [item.from, item.to]), [['[*]', 'ACTIVE'], ['ACTIVE', 'PAUSED'], ['PAUSED', 'ACTIVE']]);
+    assert.notDeepEqual(stateFacts('@startuml\nstate "Действует" as ACTIVE\n[*] --> ACTIVE\n@enduml').edges,
+      stateFacts('@startuml\nstate "Действует" as ACTIVE\n@enduml').edges);
+  });
 });
 
 describe('linkPairs', () => {

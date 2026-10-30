@@ -31,11 +31,17 @@ export function resolveRef(doc: Record<string, unknown>, node: unknown, depth = 
   const record = asRecord(node);
   const ref = record.$ref;
   if (typeof ref !== 'string' || !ref.startsWith('#/') || depth > 20) return node;
+  return resolveRef(doc, resolveRefTarget(doc, node), depth + 1);
+}
+
+export function resolveRefTarget(doc: Record<string, unknown>, node: unknown): unknown {
+  const ref = asRecord(node).$ref;
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) return node;
   let current: unknown = doc;
   for (const segment of ref.slice(2).split('/')) {
     current = asRecord(current)[decodeURIComponent(segment).replace(/~1/g, '/').replace(/~0/g, '~')];
   }
-  return resolveRef(doc, current, depth + 1);
+  return current;
 }
 
 export function refName(node: unknown): string | null {
