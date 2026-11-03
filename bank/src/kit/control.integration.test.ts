@@ -10,6 +10,7 @@ const DATABASE_URL = process.env.TEST_DATABASE_URL;
 const { PETR, ANNA } = PHONES;
 const BASE = { label: 'task-7:run-1', defects: [], sbpMode: 'NORMAL', bankTime: null };
 const ROUTES: [string, string][] = [
+  ['GET', '/_kit/scenario'],
   ['POST', '/_kit/scenario'],
   ['POST', '/_kit/reset'],
   ['POST', '/_kit/actions/transfer'],
@@ -79,6 +80,22 @@ describe('служебный API банка: секрет, сценарий, с�
   });
 
   describe('сценарий', () => {
+    it('чтение метки не меняет сценарий и переводы, сброс возвращает null', async () => {
+      assert.deepEqual((await h.kit('GET', '/_kit/scenario')).body, { label: null });
+      await scenario({ defects: ['limit-boundary'] });
+      const petr = await h.login(PETR);
+      const from = await accountOf(h, petr);
+      await sendTransfer(h, petr, 'kit-read-0001', phoneTransfer(from.number, ANNA, 100_000));
+      await h.drain();
+      const before = (await h.pool.query('SELECT * FROM operations ORDER BY number')).rows;
+      assert.ok(before.length > 0);
+      assert.deepEqual((await h.kit('GET', '/_kit/scenario')).body, { label: BASE.label });
+      assert.deepEqual((await h.pool.query('SELECT * FROM operations ORDER BY number')).rows, before);
+      assert.deepEqual([...(await loadActiveDefects(h.pool))], ['limit-boundary']);
+      await h.kit('POST', '/_kit/reset');
+      assert.deepEqual((await h.kit('GET', '/_kit/scenario')).body, { label: null });
+    });
+
     it('включает сбои, и они срабатывают, повторный сценарий выключает', async () => {
       const petr = await h.login(PETR);
       const from = await accountOf(h, petr);

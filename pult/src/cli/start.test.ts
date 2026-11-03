@@ -78,12 +78,10 @@ describe('подъём проекта', () => {
     assert.equal(ticketUrl(session({ webUrl: null }), value.tasks[1]!), null);
   });
 
-  it('начатый тикет не готовится заново', () => {
+  it('начатый тикет проходит проверку окружения повторно', () => {
     const value = session().tasks[1]!;
-    assert.equal(ticketNeedsStart(value, null), true);
-    assert.equal(ticketNeedsStart(value, 'l0'), true);
-    assert.equal(ticketNeedsStart(value, 'l1'), false);
-    assert.equal(ticketNeedsStart({ ...value, status: 'PASSED' }, null), false);
+    assert.equal(ticketNeedsStart(value), true);
+    assert.equal(ticketNeedsStart({ ...value, status: 'PASSED' }), false);
   });
 
   it('главный экран — первый модуль окружения с адресом, а не панель зависимости', () => {

@@ -7,9 +7,13 @@ import { checkAttempt, fetchAttemptProbes, putAttemptReport, startTask, type Pla
 import { supportedPrimitives } from '../platform/primitives';
 import type { CheckOutcome, Session, TaskDefinition } from '../platform/types';
 import { collectObservations, runActions, type ProbeSpec, type StepReport } from '../probes/run';
+import { fetchScenarioLabel } from '../probes/bank-api';
+import { errorText } from '../probes/errors';
+import { workSize } from '../probes/work';
 import type { ProbeContext } from '../probes/types';
 import { readConfig, readCurrentTask, writeCurrentTask, type CurrentTask } from '../store/stores';
 import { color, errorLine, line } from '../util/out';
+import { askYesNo } from './idle';
 import { findTask, renderCondition, renderOutcome, renderTaskRows, taskName } from './task-render';
 
 function authOf(runtime: Runtime): PlatformAuth | null {
@@ -111,7 +115,7 @@ export async function startTaskFlow(
   session: Session,
   selector: string,
   progress: Progress,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; ask?: (message: string) => Promise<boolean> } = {},
 ): Promise<boolean> {
   const task = findTask(session.tasks, selector);
   if (!task) {
@@ -134,12 +138,41 @@ export async function startTaskFlow(
   }
   const definition = started.value;
   const previous = readCurrentTask(runtime.dataDir);
-  const sameAttempt = !options.force && previous?.attemptId === definition.attemptId && previous.seeded;
+  let sameAttempt = !options.force && previous?.attemptId === definition.attemptId && previous.seeded;
+  const bankScenario = definition.seed.some((step) => step.action === 'bank.scenario');
+  const continuing = previous?.attemptId === definition.attemptId || task.attemptId === definition.attemptId;
   const context = probeContext(runtime, definition.label, auth, definition.attemptId);
   if (!(await ensureModules(runtime, session, definition.modules.map((module) => module.key), progress, false))) return false;
+  if (bankScenario) {
+    let active: string | null;
+    try {
+      active = await fetchScenarioLabel(context);
+    } catch (error) {
+      progress.fail(`Не удалось проверить окружение банка: ${errorText(error)}. Данные не сброшены. Обновите набор и повторите запуск.`);
+      return false;
+    }
+    sameAttempt = !options.force && active === definition.label;
+    if (!sameAttempt && (continuing || active !== null || options.force)) {
+      const message = 'Подготовить задачу заново? Данные банка, включая переводы, будут сброшены; файлы в work/ сохранятся.';
+      const ask = options.ask ?? (process.stdin.isTTY ? (message: string) => askYesNo(`${message} [д/Н]`, { settleMs: 300, defaultYes: false }) : null);
+      if (ask ? !(await ask(message)) : !options.force) {
+        progress.fail('Окружение банка не соответствует задаче. Данные сохранены. Для явного восстановления выберите задачу и выполните ./stand task restart: банк будет сброшен, work/ сохранится.');
+        return false;
+      }
+      progress.info('Повторная подготовка: данные банка будут сброшены; файлы в work/ сохранятся.');
+    }
+  }
   if (!sameAttempt) {
     progress.info('Готовлю стенды к задаче');
-    const failure = await runActions(definition.seed, context, (step) => stepLine(progress, step));
+    let failure: string | null;
+    try {
+      const seed = bankScenario ? definition.seed.filter((step) =>
+        step.action !== 'file.write' || typeof step.params.path !== 'string' || workSize(context, step.params.path) === null,
+      ) : definition.seed;
+      failure = await runActions(seed, context, (step) => stepLine(progress, step));
+    } catch (error) {
+      failure = errorText(error);
+    }
     if (failure) {
       progress.fail(`Подготовка не удалась: ${failure}`);
       return false;
@@ -185,6 +218,17 @@ export async function checkFlow(runtime: Runtime, progress: Progress): Promise<C
   if (!auth) {
     progress.fail('Токен не задан. Выполните: ./stand login');
     return null;
+  }
+  if (current.modules.some((module) => module.key === 'kit-bank')) {
+    try {
+      if (await fetchScenarioLabel(probeContext(runtime, current.label)) !== current.label) {
+        progress.fail('Окружение банка не соответствует текущей задаче. Проверка не отправлена. Запустите задачу снова, чтобы проверить окружение.');
+        return null;
+      }
+    } catch (error) {
+      progress.fail(`Не удалось проверить окружение банка: ${errorText(error)}. Проверка не отправлена.`);
+      return null;
+    }
   }
   const fresh = await currentProbes(auth, current.attemptId);
   if ('error' in fresh) {

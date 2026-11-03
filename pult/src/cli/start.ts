@@ -3,7 +3,6 @@ import { listKitContainers, profileState } from '../docker/kit-docker';
 import { startModule, stopModule, versionGate, type Progress } from '../modules/lifecycle';
 import { preflight } from '../modules/preflight';
 import type { Session, SessionModule, SessionTask } from '../platform/types';
-import { readCurrentTask } from '../store/stores';
 import { requestOpen } from '../util/open-url';
 import { color, line } from '../util/out';
 import { startTaskFlow } from './tasks';
@@ -28,9 +27,8 @@ export function ticketUrl(session: Session, task: SessionTask): string | null {
   return session.webUrl ? `${session.webUrl.replace(/\/+$/, '')}/student/labs/${encodeURIComponent(task.id)}` : null;
 }
 
-/** Начатый тикет не готовится заново: подготовка стёрла бы то, что человек уже сделал. */
-export function ticketNeedsStart(task: SessionTask, currentLabId: string | null): boolean {
-  return task.status !== 'PASSED' && currentLabId !== task.id;
+export function ticketNeedsStart(task: SessionTask): boolean {
+  return task.status !== 'PASSED';
 }
 
 /** Банк с зависимостями и модули текущего тикета: всё окружение проекта в память не помещается. */
@@ -94,7 +92,7 @@ export async function startProjectFlow(runtime: Runtime, session: Session, progr
 
   const ticket = currentTicket(session);
   let ticketStarted = false;
-  if (ticket && ticketNeedsStart(ticket, readCurrentTask(runtime.dataDir)?.labId ?? null)) {
+  if (ticket && ticketNeedsStart(ticket)) {
     if (!(await startTaskFlow(runtime, session, ticket.id, progress))) return { code: 1, hasProject: true };
     ticketStarted = true;
   }

@@ -156,6 +156,26 @@ describe('вопрос с клавишей', () => {
     assert.equal(await answer, true);
   });
 
+  it('разрушительное подтверждение: Enter отказывает, явное да подтверждает, raw-mode восстанавливается', async () => {
+    for (const key of [{ name: 'return' }, { name: 'enter' }, { sequence: 'д' }, { sequence: 'y' }]) {
+      const { input, press, modes, listeners } = fakeInput();
+      input.isRaw = true;
+      const answer = askYesNo('Сбросить? [д/Н]', { input, out: () => undefined, defaultYes: false });
+      press(key);
+      assert.equal(await answer, !key.name);
+      assert.deepEqual(modes, [true, true]);
+      assert.equal(listeners(), 0);
+    }
+  });
+
+  it('существующие вопросы сохраняют ответ да по Enter', async () => {
+    const { input, press, modes } = fakeInput();
+    const answer = askYesNo('Остановить? [Д/н]', { input, out: () => undefined });
+    press({ name: 'return' });
+    assert.equal(await answer, true);
+    assert.deepEqual(modes, [true, false]);
+  });
+
   it('отказ после паузы — «нет»', async () => {
     const { input, press } = fakeInput();
     let now = 0;

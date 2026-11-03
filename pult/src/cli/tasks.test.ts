@@ -7,8 +7,8 @@ import { after, afterEach, before, describe, it, mock } from 'node:test';
 import type { Runtime } from '../config';
 import type { Progress } from '../modules/lifecycle';
 import type { Session, SessionTask } from '../platform/types';
-import { readCurrentTask, writeConfig } from '../store/stores';
-import { restartTaskFlow, startTaskFlow } from './tasks';
+import { ensureBankSecret, readCurrentTask, writeConfig, writeCurrentTask } from '../store/stores';
+import { checkFlow, restartTaskFlow, startTaskFlow } from './tasks';
 
 const task: SessionTask = {
   id: 'lab-limit',
@@ -65,6 +65,11 @@ describe('начать текущую задачу заново', () => {
   let url = '';
   let starts = 0;
   let root = '';
+  let bank = false;
+  let bankLabel: string | null = null;
+  let bankStatus = 200;
+  let resets = 0;
+  let bankWrites = 0;
 
   const runtime = (): Runtime => ({
     version: '0.1.0',
@@ -91,10 +96,27 @@ describe('начать текущую задачу заново', () => {
             promptMd: '**Что сделать:** условие',
             hint: null,
             modules: [],
-            seed: [{ action: 'file.write', params: { path: 'seed-state.txt', content: `подготовка ${starts}` } }],
+            seed: [...(bank ? [{ action: 'bank.scenario', params: { reset: true } }] : []), { action: 'file.write', params: { path: 'seed-state.txt', content: `подготовка ${starts}` } }],
             probes: [],
           }),
         );
+        return;
+      }
+      if (request.url === '/_kit/scenario' && request.method === 'GET') {
+        response.statusCode = bankStatus;
+        response.end(JSON.stringify({ label: bankLabel }));
+        return;
+      }
+      if (request.url === '/_kit/reset' && request.method === 'POST') {
+        resets += 1;
+        bankLabel = null;
+        response.end('{}');
+        return;
+      }
+      if (request.url === '/_kit/scenario' && request.method === 'POST') {
+        bankWrites += 1;
+        bankLabel = 'lbl1';
+        response.end('{}');
         return;
       }
       response.statusCode = 404;
@@ -110,6 +132,12 @@ describe('начать текущую задачу заново', () => {
   afterEach(() => {
     rmSync(root, { recursive: true, force: true });
     starts = 0;
+    bank = false;
+    bankLabel = null;
+    bankStatus = 200;
+    resets = 0;
+    bankWrites = 0;
+    delete process.env.KIT_BANK_URL;
   });
 
   function prepare() {
@@ -117,6 +145,8 @@ describe('начать текущую задачу заново', () => {
     mkdirSync(join(root, 'data'), { recursive: true });
     mkdirSync(join(root, 'kit', 'work'), { recursive: true });
     writeConfig(join(root, 'data'), { token: 'sk_test', platformUrl: url });
+    ensureBankSecret(join(root, 'data'));
+    process.env.KIT_BANK_URL = `${url}/_kit`;
   }
 
   const seedState = () => readFileSync(join(root, 'kit', 'work', 'seed-state.txt'), 'utf8');
@@ -127,6 +157,17 @@ describe('начать текущую задачу заново', () => {
     assert.equal(await quietly(() => startTaskFlow(runtime(), session, 'lab-limit', recorder().progress)), true);
     assert.equal(starts, 2);
     assert.equal(seedState(), 'подготовка 1');
+  });
+
+  it('потеря подготовленного состояния не обнаруживается обычным запуском, restart восстанавливает его', async () => {
+    prepare();
+    await quietly(() => startTaskFlow(runtime(), session, 'lab-limit', recorder().progress));
+    writeFileSync(join(root, 'kit', 'work', 'seed-state.txt'), 'состояние сброшено');
+    assert.equal(await quietly(() => startTaskFlow(runtime(), session, 'lab-limit', recorder().progress)), true);
+    assert.equal(seedState(), 'состояние сброшено');
+    assert.equal(readCurrentTask(join(root, 'data'))?.seeded, true);
+    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, recorder().progress)), true);
+    assert.equal(seedState(), 'подготовка 3');
   });
 
   it('restart применяет сценарий снова, не трогает файлы студента и пишет понятный итог', async () => {
@@ -140,6 +181,129 @@ describe('начать текущую задачу заново', () => {
     assert.equal(readFileSync(join(root, 'kit', 'work', 'my-test.py'), 'utf8'), 'работа студента');
     assert.equal(lines.at(-1), 'Задача ZB-211 Граничные значения лимита подготовлена заново: сценарий применён. Файлы в work/ не тронуты.');
     assert.equal(readCurrentTask(join(root, 'data'))?.seeded, true);
+  });
+
+  function prepareBank(label: string | null = 'lbl1') {
+    prepare();
+    bank = true;
+    bankLabel = label;
+    writeFileSync(join(root, 'kit', 'work', 'seed-state.txt'), 'работа студента');
+  }
+
+  it('совпадение метки продолжает без seed при отсутствующей или потерянной локальной отметке', async () => {
+    prepareBank();
+    assert.equal(await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress)), true);
+    const current = readCurrentTask(join(root, 'data'))!;
+    assert.equal(current.seeded, true);
+    writeCurrentTask(join(root, 'data'), { ...current, seeded: false });
+    assert.equal(await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress)), true);
+    assert.equal(seedState(), 'работа студента');
+    assert.equal(resets, 0);
+    assert.equal(bankWrites, 0);
+  });
+
+  for (const label of [null, 'another-attempt']) {
+    it(`потерянная или чужая метка ${String(label)} не сбрасывается молча`, async () => {
+      prepareBank();
+      await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress));
+      bankLabel = label;
+      const { progress, failures } = recorder();
+      assert.equal(await quietly(() => startTaskFlow(runtime(), session, task.id, progress)), false);
+      assert.match(failures[0]!, /банк будет сброшен, work/);
+      assert.equal(resets, 0);
+      assert.equal(bankWrites, 0);
+      assert.equal(seedState(), 'работа студента');
+    });
+  }
+
+  it('чужая метка без локальной записи не стирается даже при новой попытке', async () => {
+    prepareBank('another-attempt');
+    const fresh = { ...session, tasks: [{ ...task, attemptId: null, status: 'NOT_STARTED' as const }] };
+    assert.equal(await quietly(() => startTaskFlow(runtime(), fresh, task.id, recorder().progress)), false);
+    assert.equal(resets, 0);
+    const questions: string[] = [];
+    const ask = async (message: string) => { questions.push(message); return true; };
+    assert.equal(await quietly(() => startTaskFlow(runtime(), fresh, task.id, recorder().progress, { ask })), true);
+    assert.match(questions[0]!, /переводы.*сброшены.*work/);
+    assert.equal(resets, 1);
+    assert.equal(bankWrites, 1);
+    assert.equal(seedState(), 'работа студента');
+  });
+
+  it('первый старт новой задачи готовит пустой банк и сохраняет существующие файлы', async () => {
+    prepareBank(null);
+    const fresh = { ...session, tasks: [{ ...task, attemptId: null, status: 'NOT_STARTED' as const }] };
+    assert.equal(await quietly(() => startTaskFlow(runtime(), fresh, task.id, recorder().progress)), true);
+    assert.equal(resets, 1);
+    assert.equal(bankWrites, 1);
+    assert.equal(seedState(), 'работа студента');
+  });
+
+  it('новая задача создаёт отсутствующий стартовый файл в пустом банке', async () => {
+    prepareBank(null);
+    rmSync(join(root, 'kit', 'work', 'seed-state.txt'));
+    const fresh = { ...session, tasks: [{ ...task, attemptId: null, status: 'NOT_STARTED' as const }] };
+    assert.equal(await quietly(() => startTaskFlow(runtime(), fresh, task.id, recorder().progress)), true);
+    assert.equal(seedState(), 'подготовка 1');
+  });
+
+  it('подтверждённое восстановление сохраняет work и применяет сценарий', async () => {
+    prepareBank(null);
+    assert.equal(await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress, { ask: async () => true })), true);
+    assert.equal(resets, 1);
+    assert.equal(bankWrites, 1);
+    assert.equal(seedState(), 'работа студента');
+    assert.equal(readCurrentTask(join(root, 'data'))?.seeded, true);
+  });
+
+  it('отказ от восстановления сохраняет банк и work', async () => {
+    prepareBank('another-attempt');
+    assert.equal(await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress, { ask: async () => false })), false);
+    assert.equal(resets, 0);
+    assert.equal(bankWrites, 0);
+    assert.equal(bankLabel, 'another-attempt');
+    assert.equal(seedState(), 'работа студента');
+  });
+
+  it('явный CLI restart банка сохраняет файлы подготовки студента', async () => {
+    prepareBank();
+    await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress));
+    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, recorder().progress)), true);
+    assert.equal(resets, 1);
+    assert.equal(bankWrites, 1);
+    assert.equal(seedState(), 'работа студента');
+  });
+
+  for (const unavailable of ['404', 'network']) {
+    it(`ошибка проверки банка (${unavailable}) запрещает seed и restart`, async () => {
+      prepareBank();
+      await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress));
+      bankStatus = 404;
+      if (unavailable === 'network') process.env.KIT_BANK_URL = 'http://127.0.0.1:1/_kit';
+      assert.equal(await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress)), false);
+      assert.equal(await quietly(() => restartTaskFlow(runtime(), session, recorder().progress)), false);
+      assert.equal(resets, 0);
+      assert.equal(bankWrites, 0);
+      assert.equal(seedState(), 'работа студента');
+    });
+  }
+
+  it('check не отправляет факты для чужого сценария или недоступного банка', async () => {
+    prepareBank();
+    await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress));
+    const current = readCurrentTask(join(root, 'data'))!;
+    writeCurrentTask(join(root, 'data'), { ...current, modules: [{ key: 'kit-bank', title: 'Банк' }] });
+    for (const label of [null, 'another-attempt']) {
+      bankLabel = label;
+      const { progress, failures } = recorder();
+      assert.equal(await checkFlow(runtime(), progress), null);
+      assert.match(failures[0]!, /Проверка не отправлена/);
+    }
+    bankStatus = 404;
+    const { progress, failures } = recorder();
+    assert.equal(await checkFlow(runtime(), progress), null);
+    assert.match(failures[0]!, /Проверка не отправлена/);
+    assert.equal(resets, 0);
   });
 
   it('без текущей задачи restart отказывает и подсказывает, как начать', async () => {

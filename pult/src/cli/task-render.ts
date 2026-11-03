@@ -13,13 +13,14 @@ export function taskStatusWord(task: SessionTask): string {
   if (task.project?.state === 'LOCKED') {
     return task.project.unlocksAfter ? `после ${task.project.unlocksAfter}` : 'закрыт';
   }
+  if (task.project?.state === 'DONE') return STATUS_WORD.PASSED;
   return STATUS_WORD[task.status];
 }
 
 function statusColor(task: SessionTask, text: string): string {
   if (task.needsUpdate) return color.yellow(text);
   if (task.project?.state === 'LOCKED') return color.dim(text);
-  if (task.status === 'PASSED') return color.green(text);
+  if (task.project?.state === 'DONE' || task.status === 'PASSED') return color.green(text);
   if (task.status === 'FAILED') return color.red(text);
   return task.status === 'NOT_STARTED' ? color.dim(text) : text;
 }

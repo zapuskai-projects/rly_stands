@@ -44,7 +44,9 @@ describe('служебный API банка совпадает с kit-api.yaml',
       tariffs: [{ code: 'START', dailyLimitKop: 15_000_000 }],
       personas: [{ phone: ANNA, dailyLimitKop: null }],
     };
+    conforms('kitScenarioState', await h.kit('GET', '/_kit/scenario'));
     conforms('kitScenario', await h.kit('POST', '/_kit/scenario', scenario), scenario);
+    conforms('kitScenarioState', await h.kit('GET', '/_kit/scenario'));
     conforms('kitScenario', await h.kit('POST', '/_kit/scenario', { ...scenario, defects: ['нет-такого'] }));
     conforms('kitScenario', await h.kit('POST', '/_kit/scenario', { ...scenario, tariffs: [{ code: 'GOLD' }] }));
     conforms('kitScenario', await h.kit('GET', '/_kit/none'));
@@ -153,6 +155,7 @@ describe('служебный API банка совпадает с kit-api.yaml',
         'GET /_kit/facts/requests',
         'GET /_kit/facts/tariffs/{code}',
         'GET /_kit/facts/webhook-deliveries',
+        'GET /_kit/scenario',
         'POST /_kit/actions/autopay-run',
         'POST /_kit/actions/check-client',
         'POST /_kit/actions/review',

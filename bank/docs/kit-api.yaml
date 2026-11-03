@@ -16,6 +16,23 @@ security:
   - kitSecret: []
 paths:
   /_kit/scenario:
+    get:
+      operationId: kitScenarioState
+      summary: Прочитать метку активного сценария
+      description: Читает метку без изменения сценария и данных банка. После сброса метка равна null.
+      responses:
+        '200':
+          description: Метка активного сценария
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [label]
+                properties:
+                  label:
+                    type: [string, 'null']
+        '404':
+          $ref: '#/components/responses/NotFound'
     post:
       operationId: kitScenario
       summary: Подготовить банк к задаче

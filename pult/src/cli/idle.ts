@@ -43,6 +43,7 @@ export type AskInput = {
 };
 
 export type AskOptions = {
+  defaultYes?: boolean;
   /** Первые мгновения клавиши не считаются ответом: случайный Enter при загрузке не должен стать «да». */
   settleMs?: number;
   /** Ctrl+C завершает пульт, а не считается ответом «нет». */
@@ -76,7 +77,7 @@ export function askYesNo(question: string, options: AskOptions = {}): Promise<bo
         options.onInterrupt();
         return;
       }
-      const answer = answerOf(key ?? {});
+      const answer = key?.name === 'return' || key?.name === 'enter' ? (options.defaultYes ?? true) : answerOf(key ?? {});
       if (answer === null) return;
       input.off('keypress', handler);
       input.setRawMode(wasRaw);

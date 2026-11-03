@@ -12,6 +12,7 @@ import { listDeliveryFacts, listQrFacts } from './qr-facts';
 import { listAutopayFacts, runKitAutopay } from './autopay';
 import { createCheckClient } from './check-client';
 import { findLedgerFact, findOperationFact, listInconsistentAccounts, listOperationFacts, listRequestFacts } from './facts';
+import { loadScenarioLabel } from '../scenario/scenario.repository';
 import { resetBank } from './reset';
 import { applyScenario } from './scenario';
 import { kitSchemas, parseKit } from './schemas';
@@ -65,6 +66,10 @@ export function mountKit(app: Express, deps: KitDeps): void {
   const router = Router();
   router.use(gate(deps.secret));
   router.use(express.json({ limit: '256kb' }));
+
+  router.get('/scenario', async (_req, res) => {
+    res.json({ label: await loadScenarioLabel(deps.pool) });
+  });
 
   router.post('/scenario', async (req, res) => {
     await applyScenario(deps, parseKit(kitSchemas.scenario, req.body));

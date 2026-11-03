@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { CheckOutcome, SessionTask } from '../platform/types';
-import { stripAnsi } from '../util/out';
+import { color, stripAnsi } from '../util/out';
 import { findTask, renderCondition, renderOutcome, renderTaskRows } from './task-render';
 
 function task(id: string, title: string, overrides: Partial<SessionTask> = {}): SessionTask {
@@ -122,6 +122,19 @@ describe('тикеты учебного проекта', () => {
     assert.match(rows[1] ?? '', /1 +ZB-100 Поднять банк .*зачтена/);
     assert.match(rows[2] ?? '', /2 +ZB-101 Перевод между счетами .*не начата/);
     assert.match(rows[3] ?? '', /3 +ZB-102 Лимиты .*после ZB-101/);
+  });
+
+  it('сохраняет зелёный зачёт проекта при неуспешной или начатой повторной попытке', () => {
+    for (const status of ['FAILED', 'STARTED', 'NOT_STARTED'] as const) {
+      const repeated = task('l0', 'Документы противоречат друг другу', {
+        project: project('ZB-106', 'DONE'),
+        status,
+      });
+      const rows = renderTaskRows([repeated], null);
+      assert.ok(rows[1]?.endsWith(color.green('зачтена')));
+      assert.doesNotMatch(stripAnsi(rows[1] ?? ''), /не зачтена|в работе|не начата/);
+      assert.equal(repeated.status, status);
+    }
   });
 
   it('находятся по коду тикета', () => {

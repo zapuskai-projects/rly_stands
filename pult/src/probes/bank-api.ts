@@ -40,6 +40,16 @@ export function call(ctx: ProbeContext, method: 'GET' | 'POST', path: string, bo
   });
 }
 
+export async function fetchScenarioLabel(ctx: ProbeContext): Promise<string | null> {
+  const result = await call(ctx, 'GET', '/scenario');
+  if (!result.ok) throw failure(BANK_MODULE, 'проверка активного сценария', result);
+  const body = asRecord(result.json);
+  if (body.label !== null && (typeof body.label !== 'string' || !body.label.trim())) {
+    throw new ProbeError('Банк вернул неизвестное состояние сценария. Обновите набор и повторите запуск.');
+  }
+  return body.label as string | null;
+}
+
 export async function assertSecretAccepted(ctx: ProbeContext): Promise<void> {
   const result = await call(ctx, 'GET', '/facts/ledger');
   if (result.status === 404) {
