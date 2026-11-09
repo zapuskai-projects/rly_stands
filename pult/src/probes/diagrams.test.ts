@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { c4Facts, classFacts, encodePlantuml, extractTitle, linkPairs, sequenceFacts, stateFacts } from './diagrams';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, type TestContext } from 'node:test';
+import { c4Facts, classFacts, DIAGRAM_EXECUTORS, encodePlantuml, extractTitle, linkPairs, sequenceFacts, stateFacts } from './diagrams';
+import { collectObservations } from './run';
 
 const SEQUENCE = `@startuml
 title k3x9ab Согласование документа
@@ -10,6 +14,59 @@ queue Брокер
 Клиент -> API: POST /documents
 API ->> Брокер: doc.created
 @enduml`;
+
+function diagramContext(t: TestContext, status: number, headers: Record<string, string> = {}) {
+  const workDir = mkdtempSync(join(tmpdir(), 'kit-diagram-'));
+  t.after(() => rmSync(workDir, { recursive: true, force: true }));
+  writeFileSync(join(workDir, 'diagram.puml'), SEQUENCE.replace('@enduml', [
+    'alt недостаточно средств',
+    'note over API: Повтор завтра в 10:00',
+    'else успешно',
+    'API --> Клиент: исполнен',
+    'end',
+    '@enduml',
+  ].join('\n')));
+  t.mock.method(globalThis, 'fetch', async (url: string) => {
+    assert.match(url, /^http:\/\/plantuml:8080\/svg\//);
+    return new Response('<svg/>', { status, headers });
+  });
+  return { workDir, label: 'k3x9ab' };
+}
+
+describe('проверка диаграммы сервером', () => {
+  it('использует SVG для диаграммы с заметкой внутри alt/else', async (t) => {
+    const ctx = diagramContext(t, 200);
+    const result = await DIAGRAM_EXECUTORS['plantuml.sequence']!({ file: 'diagram.puml' }, ctx) as { syntaxErrors: string[] };
+    assert.deepEqual(result.syntaxErrors, []);
+  });
+
+  for (const line of [undefined, '12']) {
+    it(`сохраняет настоящую ошибку синтаксиса, строка ${line ?? 'не указана'}`, async (t) => {
+      const headers: Record<string, string> = { 'x-plantuml-diagram-error': 'Syntax Error?' };
+      if (line) headers['x-plantuml-diagram-error-line'] = line;
+      const ctx = diagramContext(t, 400, headers);
+      const result = await DIAGRAM_EXECUTORS['plantuml.sequence']!({ file: 'diagram.puml' }, ctx) as { syntaxErrors: string[] };
+      assert.deepEqual(result.syntaxErrors, [line ? 'строка 12: Syntax Error?' : 'Syntax Error?']);
+    });
+  }
+
+  for (const status of [400, 404, 429, 500, 503]) {
+    it(`HTTP ${status} без ошибки PlantUML означает недоступность проверки`, async (t) => {
+      const ctx = diagramContext(t, status);
+      const observations = await collectObservations([
+        { id: 'diagram', probe: 'plantuml.sequence', params: { file: 'diagram.puml' } },
+      ], ctx);
+      assert.deepEqual(observations.diagram, { error: `PlantUML-сервер: проверка недоступна (HTTP ${status})` });
+    });
+  }
+
+  it('HTTP 500 с заголовком ошибки тоже остаётся сбоем сервера', async (t) => {
+    const ctx = diagramContext(t, 500, { 'x-plantuml-diagram-error': 'internal error' });
+    await assert.rejects(DIAGRAM_EXECUTORS['plantuml.sequence']!({ file: 'diagram.puml' }, ctx), {
+      name: 'ProbeError', message: 'PlantUML-сервер: проверка недоступна (HTTP 500)',
+    });
+  });
+});
 
 describe('extractTitle', () => {
   it('однострочный и блочный заголовок', () => {

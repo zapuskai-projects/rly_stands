@@ -4,12 +4,13 @@ import { parseC4 } from '../plantuml/c4';
 import { parseClasses } from '../plantuml/classes';
 import { parseSequence } from '../plantuml/sequence';
 import { INITIAL_MARK, parseState } from '../plantuml/state';
+import { ProbeError } from './errors';
 import { http } from './http';
 import { executor, type ExecutorTable, type ProbeContext } from './types';
 import { missingFile, readWorkText, richTextProblem } from './work';
 
 const MODULE = 'PlantUML-сервер';
-const SERVER = 'http://plantuml:8080/txt';
+const SERVER = 'http://plantuml:8080/svg';
 const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_';
 
 export function encodePlantuml(source: string): string {
@@ -34,7 +35,10 @@ export function extractTitle(source: string): string {
 async function serverErrors(source: string): Promise<string[]> {
   const result = await http(MODULE, `${SERVER}/${encodePlantuml(source)}`, { timeoutMs: 20_000 });
   if (result.status === 200) return [];
-  const message = result.headers['x-plantuml-diagram-error'] ?? 'ошибка синтаксиса';
+  const message = result.headers['x-plantuml-diagram-error'];
+  if (result.status !== 400 || !message) {
+    throw new ProbeError(`${MODULE}: проверка недоступна (HTTP ${result.status})`);
+  }
   const line = result.headers['x-plantuml-diagram-error-line'];
   return [line ? `строка ${line}: ${message}` : message];
 }
