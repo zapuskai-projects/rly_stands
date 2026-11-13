@@ -33,7 +33,7 @@ export function runUpdateOffer(request: UpdateRequest): Promise<OfferOutcome> {
     say: request.say,
     prepare:
       request.prepare ??
-      (async (version) => (await dispatchAction({ runtime, session: ctx.session, stale: ctx.stale, progress }, { action: 'update.prepare', version })).ok),
+      (async (version) => (await dispatchAction({ runtime, session: ctx.session, stale: ctx.stale, progress, confirmed: true }, { action: 'update.prepare', version })).ok),
   });
 }
 

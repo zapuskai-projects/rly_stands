@@ -172,7 +172,8 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
   }
   if (command === 'login') return (await login(runtime, { paste: args.includes('--token') })) ? 0 : 1;
   if (command === 'logout') {
-    await dispatchAction({ runtime, progress: consoleProgress, confirmed: true }, { action: 'platform.logout' });
+    const result = await dispatchAction({ runtime, progress: consoleProgress, confirmed: true }, { action: 'platform.logout' });
+    if (!result.ok) return 1;
     line('Токен удалён с этого компьютера. Запущенные стенды продолжают работать: ./stand down');
     return 0;
   }

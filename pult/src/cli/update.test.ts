@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, mock } from 'node:test';
 import type { Runtime } from '../config';
 import type { Progress } from '../modules/lifecycle';
 import { pullTracker } from '../modules/pull';
@@ -29,8 +29,35 @@ import {
   type PrepareDeps,
 } from './update';
 import { runUpdateOffer } from './update-flow';
+import { kitFingerprint } from '../panel/store';
 
 const HOUR = 60 * 60 * 1000;
+
+it('согласие на обновление передаётся работающему контроллеру без второго вопроса', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'update-confirmation-'));
+  const current = runtime('0.1.11', dir);
+  const requests: string[] = [];
+  let accepted: unknown;
+  let questions = 0;
+  mkdirSync(join(dir, 'panel'));
+  writeFileSync(join(dir, 'panel/controller.json'), JSON.stringify({ fingerprint: kitFingerprint(current) }));
+  writeFileSync(join(dir, 'panel/internal-key'), 'private-key');
+  try {
+    mock.method(globalThis, 'fetch', async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      requests.push(path);
+      if (path === '/internal/meta') return new Response('{}');
+      if (path === '/internal/plan') return new Response(JSON.stringify({ allowed: true, planId: 'plan', confirmationRequired: true, confirmationToken: 'confirmation', consequences: ['Обновление'] }));
+      if (path === '/internal/operation') { accepted = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ operationId: 'operation' })); }
+      return new Response(JSON.stringify({ state: 'WAITING_CONFIRMATION', events: [], result: { ok: true } }));
+    });
+    assert.equal(await runUpdateOffer({ runtime: current, ctx: ctx('0.1.12'), offers: new UpdateOffers(), atLaunch: true,
+      progress: recorder().progress, say: () => undefined, interactive: true, ask: async () => { questions += 1; return true; } }), 'updating');
+    assert.equal(questions, 1);
+    assert.deepEqual(accepted, { planId: 'plan', confirmation: { checked: true, token: 'confirmation' } });
+    assert.deepEqual(requests, ['/internal/meta', '/internal/plan', '/internal/operation', '/internal/operations/operation']);
+  } finally { mock.restoreAll(); rmSync(dir, { recursive: true, force: true }); }
+});
 const runtime = (version = '0.1.11', dataDir = '/tmp/none'): Runtime => ({
   version,
   platformUrl: 'http://127.0.0.1:1',

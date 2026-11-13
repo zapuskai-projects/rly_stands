@@ -35,7 +35,10 @@ export function checkCheckout(c: Controller, action: string): void {
 }
 
 export function markPrepared(c: Controller, op: Operation, version: string): void {
-  op.handoff = { version, oldVersion: c.runtime.version, oldBuild: c.uiBuildId, phase: 'prepared' };
+  const previous = c.runtime.version === version && c.uiBuildId.startsWith(version + '-')
+    ? [...c.store.state.operations].reverse().find((item) => item.state === 'FAILED' && item.handoff?.phase === 'failed' && item.handoff.version === version && item.handoff.oldBuild !== c.uiBuildId)?.handoff
+    : undefined;
+  op.handoff = { version, oldVersion: previous?.oldVersion ?? c.runtime.version, oldBuild: previous?.oldBuild ?? c.uiBuildId, phase: 'prepared' };
   op.state = 'WAITING_CONFIRMATION';
   op.stage = 'Версия скачана. Для завершения обновления оставьте ./stand panel открытым.';
   op.cancelAllowed = false;
