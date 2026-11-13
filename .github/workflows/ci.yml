@@ -25,6 +25,37 @@ jobs:
       - run: npm run lint
       - run: npm run test:unit
 
+  panel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: pult
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pult/package-lock.json
+      - run: npm ci
+      - run: npx --no-install playwright install --with-deps chromium
+      - name: Вход, редактор и пять разделов на трёх ширинах
+        env:
+          PANEL_TEST_OUTPUT: ${{ runner.temp }}/panel-screens
+        run: npm run test:panel
+      - name: Перезапуск банка и очереди, сброс и обновление открытой панели
+        run: sh scripts/test-panel-live.sh
+      - name: Снимки панели и результаты операций
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: panel-proof
+          path: |
+            ${{ runner.temp }}/panel-screens/**/*.png
+            ${{ runner.temp }}/panel-proof
+          if-no-files-found: ignore
+
   compose:
     runs-on: ubuntu-latest
     steps:

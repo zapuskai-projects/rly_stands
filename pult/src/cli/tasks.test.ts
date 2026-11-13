@@ -166,7 +166,7 @@ describe('начать текущую задачу заново', () => {
     assert.equal(await quietly(() => startTaskFlow(runtime(), session, 'lab-limit', recorder().progress)), true);
     assert.equal(seedState(), 'состояние сброшено');
     assert.equal(readCurrentTask(join(root, 'data'))?.seeded, true);
-    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, recorder().progress)), true);
+    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, recorder().progress, { yes: true })), true);
     assert.equal(seedState(), 'подготовка 3');
   });
 
@@ -175,7 +175,7 @@ describe('начать текущую задачу заново', () => {
     await quietly(() => startTaskFlow(runtime(), session, 'lab-limit', recorder().progress));
     writeFileSync(join(root, 'kit', 'work', 'my-test.py'), 'работа студента');
     const { progress, lines, failures } = recorder();
-    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, progress)), true);
+    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, progress, { yes: true })), true);
     assert.deepEqual(failures, []);
     assert.equal(seedState(), 'подготовка 2');
     assert.equal(readFileSync(join(root, 'kit', 'work', 'my-test.py'), 'utf8'), 'работа студента');
@@ -268,7 +268,7 @@ describe('начать текущую задачу заново', () => {
   it('явный CLI restart банка сохраняет файлы подготовки студента', async () => {
     prepareBank();
     await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress));
-    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, recorder().progress)), true);
+    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, recorder().progress, { yes: true })), true);
     assert.equal(resets, 1);
     assert.equal(bankWrites, 1);
     assert.equal(seedState(), 'работа студента');
@@ -281,7 +281,7 @@ describe('начать текущую задачу заново', () => {
       bankStatus = 404;
       if (unavailable === 'network') process.env.KIT_BANK_URL = 'http://127.0.0.1:1/_kit';
       assert.equal(await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress)), false);
-      assert.equal(await quietly(() => restartTaskFlow(runtime(), session, recorder().progress)), false);
+      assert.equal(await quietly(() => restartTaskFlow(runtime(), session, recorder().progress, { yes: true })), false);
       assert.equal(resets, 0);
       assert.equal(bankWrites, 0);
       assert.equal(seedState(), 'работа студента');
@@ -296,12 +296,12 @@ describe('начать текущую задачу заново', () => {
     for (const label of [null, 'another-attempt']) {
       bankLabel = label;
       const { progress, failures } = recorder();
-      assert.equal(await checkFlow(runtime(), progress), null);
+      assert.equal(await checkFlow(runtime(), progress, session), null);
       assert.match(failures[0]!, /Проверка не отправлена/);
     }
     bankStatus = 404;
     const { progress, failures } = recorder();
-    assert.equal(await checkFlow(runtime(), progress), null);
+    assert.equal(await checkFlow(runtime(), progress, session), null);
     assert.match(failures[0]!, /Проверка не отправлена/);
     assert.equal(resets, 0);
   });
@@ -309,7 +309,7 @@ describe('начать текущую задачу заново', () => {
   it('без текущей задачи restart отказывает и подсказывает, как начать', async () => {
     prepare();
     const { progress, failures } = recorder();
-    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, progress)), false);
+    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, progress, { yes: true })), false);
     assert.match(failures[0] ?? '', /Текущей задачи нет/);
     assert.equal(starts, 0);
   });
@@ -319,7 +319,7 @@ describe('начать текущую задачу заново', () => {
     await quietly(() => startTaskFlow(runtime(), session, 'lab-limit', recorder().progress));
     writeConfig(join(root, 'data'), { platformUrl: 'http://127.0.0.1:1' });
     const { progress, failures } = recorder();
-    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, progress)), false);
+    assert.equal(await quietly(() => restartTaskFlow(runtime(), session, progress, { yes: true })), false);
     assert.match(failures[0] ?? '', /Платформа недоступна/);
     assert.equal(seedState(), 'подготовка 1');
   });

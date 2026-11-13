@@ -1,11 +1,12 @@
-import { confirm } from '@inquirer/prompts';
 import { runAgent } from '../agent/run';
 import type { Runtime } from '../config';
-import { listKitContainers, memoryTotalMb, profileState } from '../docker/kit-docker';
-import { resetModule, startModule, stopModule, versionGate, versionReminder } from '../modules/lifecycle';
+import { listKitContainers, memoryTotalMb } from '../docker/kit-docker';
+import { versionGate, versionReminder } from '../modules/lifecycle';
+import { dispatchAction } from '../actions/dispatcher';
 import { buildRows, findModule } from '../modules/view';
 import type { Session, SessionModule } from '../platform/types';
-import { clearConfig, readNotices, takeNotices } from '../store/stores';
+import { readNotices } from '../store/stores';
+import { routeNotices } from '../panel/gateway';
 import { color, errorLine, line } from '../util/out';
 import { runDoctor } from './doctor';
 import { formatShortDate } from './format';
@@ -15,6 +16,7 @@ import { renderRows } from './menu/render';
 import { consoleProgress } from './progress';
 import { loadSession, login, type SessionContext } from './session';
 import { startProjectFlow } from './start';
+import { taskConfirmation } from './tasks';
 import { belowMinimum, needsReconcile, NO_NEW_VERSION, refusalReason, UPDATE_EXIT_CODE, UpdateOffers } from './update';
 import { reconcileAfterUpdate, runUpdateOffer } from './update-flow';
 
@@ -37,15 +39,15 @@ const USAGE = `Команды набора:
   ./stand reset <стенд>   удалить контейнеры и данные стенда
   ./stand tasks           список задач
   ./stand task start <номер>  начать задачу: запустить стенды, подготовить, показать условие
-  ./stand task restart    начать текущую задачу заново: сценарий применяется снова, файлы в work/ не меняются
+  ./stand task restart [--yes] начать текущую задачу заново: сценарий применяется снова, файлы в work/ не меняются
   ./stand task            показать условие текущей задачи ещё раз
   ./stand check           проверить текущую задачу
   ./stand verify <задача> проверить задачу эталоном (только администратор)
   ./stand doctor          проверить Docker, память, сеть, платформу и токен
   ./stand agent           фоновая проверка токена (запускается сама)`;
 
-function printNotices(runtime: Runtime, consume: boolean): void {
-  const notices = consume ? takeNotices(runtime.dataDir) : readNotices(runtime.dataDir);
+async function printNotices(runtime: Runtime, consume: boolean): Promise<void> {
+  const notices = consume ? await routeNotices(runtime) : readNotices(runtime.dataDir);
   for (const notice of notices) {
     line(color.yellow(`! ${notice.title ?? 'Стенд'} остановлен: ${notice.reason}`));
   }
@@ -93,51 +95,34 @@ async function commandUp(runtime: Runtime, ctx: SessionContext, names: string[])
     containers: await listKitContainers(),
     interactive: isInteractive(),
     ask: askYesNo,
-    stop: (idle) => stopModule(idle, consoleProgress),
+    stop: async (idle) => (await dispatchAction({ runtime, session: ctx.session, stale: ctx.stale, progress: consoleProgress }, { action: 'module.stop', moduleKey: idle.key })).ok,
   });
   let failed = 0;
   for (const module of modules) {
-    if (!(await startModule(runtime, ctx.session, module, consoleProgress))) failed += 1;
+    if (!(await dispatchAction({ runtime, session: ctx.session, stale: ctx.stale, progress: consoleProgress }, { action: 'module.start', moduleKey: module.key })).ok) failed += 1;
   }
   return failed ? 1 : 0;
 }
 
-async function commandDown(ctx: SessionContext, names: string[]): Promise<number> {
-  const modules = names.length ? resolveModules(ctx.session, names) : ctx.session.modules;
-  if (!modules) return 1;
-  const containers = await listKitContainers();
-  let failed = 0;
-  for (const module of modules) {
-    if (profileState(containers, module.profile) === 'stopped') {
-      if (names.length) line(`${module.title} уже остановлен`);
-      continue;
-    }
-    if (!(await stopModule(module, consoleProgress))) failed += 1;
-  }
-  return failed ? 1 : 0;
-}
-
-async function commandReset(ctx: SessionContext, args: string[]): Promise<number> {
-  const names = args.filter((arg) => arg !== '--yes');
-  if (names.length !== 1) {
-    errorLine('Укажите один стенд: ./stand reset kit-postgres');
-    return 1;
-  }
+async function commandDown(runtime: Runtime, ctx: SessionContext, names: string[]): Promise<number> {
+  const actionContext = { runtime, session: ctx.session, stale: ctx.stale, progress: consoleProgress };
+  if (!names.length) return (await dispatchAction(actionContext, { action: 'modules.stopAll' })).ok ? 0 : 1;
   const modules = resolveModules(ctx.session, names);
-  const module = modules?.[0];
+  if (!modules) return 1;
+  let failed = false;
+  for (const module of modules) if (!(await dispatchAction(actionContext, { action: 'module.stop', moduleKey: module.key })).ok) failed = true;
+  return failed ? 1 : 0;
+}
+
+async function commandReset(runtime: Runtime, ctx: SessionContext, args: string[]): Promise<number> {
+  const names = args.filter((arg) => arg !== '--yes');
+  if (names.length !== 1) { errorLine('Укажите один стенд: ./stand reset kit-postgres'); return 1; }
+  const module = resolveModules(ctx.session, names)?.[0];
   if (!module) return 1;
-  if (!args.includes('--yes')) {
-    if (!process.stdin.isTTY) {
-      errorLine('Без терминала добавьте --yes: ./stand reset <стенд> --yes');
-      return 1;
-    }
-    const agreed = await confirm({
-      message: `Удалить контейнеры и все данные стенда «${module.title}»?`,
-      default: false,
-    });
-    if (!agreed) return 0;
-  }
-  return (await resetModule(module, consoleProgress)) ? 0 : 1;
+  const result = await dispatchAction({ runtime, session: ctx.session, stale: ctx.stale, progress: consoleProgress,
+    confirmed: args.includes('--yes'), ask: taskConfirmation }, { action: 'module.reset', moduleKey: module.key });
+  if (!result.ok && result.code === 'CONFIRMATION_REQUIRED') errorLine('Сброс отменён. Без терминала подтвердите явно: --yes');
+  return result.ok ? 0 : 1;
 }
 
 async function runTaskCommand(
@@ -147,11 +132,15 @@ async function runTaskCommand(
   args: string[],
 ): Promise<number> {
   const tasks = await import('./tasks.js');
+  if (ctx.stale && (command === 'check' || command === 'verify' || (command === 'task' && ['start', 'restart'].includes(args[0] ?? '')))) {
+    errorLine('Для подготовки и проверки задачи нужна связь с платформой');
+    return 1;
+  }
   if (command === 'tasks') {
     tasks.printTaskList(ctx.session);
     return 0;
   }
-  if (command === 'task' && args[0] === 'restart') return (await tasks.restartTaskFlow(runtime, ctx.session, consoleProgress)) ? 0 : 1;
+  if (command === 'task' && args[0] === 'restart') return (await tasks.restartTaskFlow(runtime, ctx.session, consoleProgress, { yes: args.includes('--yes') })) ? 0 : 1;
   if (command === 'task' && args[0] !== 'start') return tasks.showCurrentTask(runtime);
   if (command === 'task') {
     if (!args[1]) {
@@ -161,7 +150,7 @@ async function runTaskCommand(
     return (await tasks.startTaskFlow(runtime, ctx.session, args.slice(1).join(' '), consoleProgress)) ? 0 : 1;
   }
   if (command === 'check') {
-    const outcome = await tasks.checkFlow(runtime, consoleProgress);
+    const outcome = await tasks.checkFlow(runtime, consoleProgress, ctx.session);
     return outcome && outcome.status === 'PASSED' ? 0 : 1;
   }
   const labId = args.find((arg) => !arg.startsWith('--'));
@@ -183,10 +172,11 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
   }
   if (command === 'login') return (await login(runtime, { paste: args.includes('--token') })) ? 0 : 1;
   if (command === 'logout') {
-    clearConfig(runtime.dataDir);
+    await dispatchAction({ runtime, progress: consoleProgress, confirmed: true }, { action: 'platform.logout' });
     line('Токен удалён с этого компьютера. Запущенные стенды продолжают работать: ./stand down');
     return 0;
   }
+  if (command === 'down' && !args.length) return (await dispatchAction({ runtime, progress: consoleProgress }, { action: 'modules.stopAll' })).ok ? 0 : 1;
   if (command === 'doctor') return runDoctor(runtime);
   if (command === 'agent') return runAgent(runtime);
   if (command && !['start', 'status', 'up', 'down', 'restart', 'reset', 'tasks', 'task', 'check', 'verify'].includes(command)) {
@@ -194,7 +184,7 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
     return 1;
   }
 
-  printNotices(runtime, Boolean(command));
+  await printNotices(runtime, Boolean(command));
   const ctx = await loadSession(runtime, interactive);
   if (!ctx) return 1;
   const askForUpdate = !command || LAUNCH_COMMANDS.has(command) || (GUARDED_COMMANDS.has(command) && belowMinimum(runtime, ctx.session));
@@ -212,7 +202,7 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
   }
   if (command !== 'start' && command !== undefined && needsReconcile(command)) await reconcileAfterUpdate(runtime, ctx.session, consoleProgress);
   if (command === 'start') {
-    const outcome = await startProjectFlow(runtime, ctx.session, consoleProgress);
+    const outcome = await startProjectFlow(runtime, ctx.session, consoleProgress, ctx.stale);
     if (!outcome.hasProject) line('Учебного проекта пока нет: стенды запускаются через меню ./stand.');
     if (outcome.code === 0) await reconcileAfterUpdate(runtime, ctx.session, consoleProgress);
     return outcome.code;
@@ -222,7 +212,7 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
       await printStatus(runtime, ctx);
       return 0;
     }
-    const outcome = await startProjectFlow(runtime, ctx.session, consoleProgress);
+    const outcome = await startProjectFlow(runtime, ctx.session, consoleProgress, ctx.stale);
     if (outcome.hasProject) line();
     if (outcome.code === 0) await reconcileAfterUpdate(runtime, ctx.session, consoleProgress);
     return (await runMenu(runtime, ctx, offers)) === 'update' ? UPDATE_EXIT_CODE : 0;
@@ -232,15 +222,19 @@ export async function runCli(runtime: Runtime, argv: string[]): Promise<number> 
     return 0;
   }
   if (command === 'up') return commandUp(runtime, ctx, args);
-  if (command === 'down') return commandDown(ctx, args);
+  if (command === 'down') return commandDown(runtime, ctx, args);
   if (command === 'restart') {
     if (!args.length) {
       errorLine('Укажите стенды: ./stand restart kit-bank');
       return 1;
     }
-    const stopped = await commandDown(ctx, args);
-    return stopped === 0 ? commandUp(runtime, ctx, args) : stopped;
+    const modules = resolveModules(ctx.session, args);
+    if (!modules) return 1;
+    let failed = false;
+    for (const module of modules) if (!(await dispatchAction({ runtime, session: ctx.session, stale: ctx.stale, progress: consoleProgress },
+      { action: 'module.restart', moduleKey: module.key })).ok) failed = true;
+    return failed ? 1 : 0;
   }
-  if (command === 'reset') return commandReset(ctx, args);
+  if (command === 'reset') return commandReset(runtime, ctx, args);
   return runTaskCommand(runtime, ctx, command!, args);
 }

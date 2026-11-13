@@ -4,6 +4,8 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
+COPY web ./web
+COPY scripts/build-panel.mjs ./scripts/build-panel.mjs
 RUN npm run build
 
 FROM node:22-alpine AS dependencies
@@ -33,11 +35,13 @@ ENTRYPOINT ["npx", "tsx", "--test"]
 CMD ["src/**/*.live.ts"]
 
 FROM node:22-alpine
-RUN apk add --no-cache docker-cli docker-cli-compose libxml2-utils
+LABEL stands.kit.panel.protocol="1"
+RUN apk add --no-cache docker-cli docker-cli-compose util-linux libxml2-utils
 COPY --from=tools /usr/local/bin/buf /usr/local/bin/oasdiff /usr/local/bin/
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/dist/panel-web ./panel-web
 COPY package.json ./
 ENTRYPOINT ["node", "/app/dist/main.js"]

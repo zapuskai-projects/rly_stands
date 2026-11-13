@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, describe, it, mock } from 'node:test';
 import { reconcileAfterUpdate } from '../cli/update-flow';
 import type { Runtime } from '../config';
 import { recreateTail, type RunningImage } from '../docker/kit-docker';
 import type { Session } from '../platform/types';
 import { clearStarting, markStarting } from '../store/starting';
-import { readUpdateMarker, writeUpdateMarker } from '../store/stores';
+import { readUpdateMarker, writeUpdateMarker, writeConfig } from '../store/stores';
 import type { Progress } from './lifecycle';
 import {
   CHECK_FAILED,
@@ -45,6 +45,8 @@ const RUNNING: RunningImage[] = [
 ];
 
 const session = {
+  user: { name: 'Тест' }, token: { expiresAt: '2099-01-01T00:00:00Z' }, tasks: [],
+  kit: { minVersion: '0.1.0', latestVersion: '0.1.12', offlineGraceHours: 24 },
   modules: [
     { key: 'kit-bank', title: 'ЗапускБанк', profile: 'bank', requires: ['kit-postgres'] },
     { key: 'kit-postgres', title: 'PostgreSQL', profile: 'postgres' },
@@ -122,7 +124,7 @@ describe('пересоздание после обновления', () => {
     assert.equal(recreated[0], 'bank:kit-bank-core');
     assert.deepEqual(recreated.slice().sort(), ['bank:kit-bank-antifraud', 'bank:kit-bank-core', 'bank:kit-bank-sbp']);
     assert.deepEqual(pulled, ['bank:0.1.12']);
-    assert.ok(log.includes('Linux-сервер обновится, когда вы его перезапустите (данные внутри сбросятся)'));
+    assert.ok(log.includes('Linux-сервер: требуется отдельный перенос данных внутри контейнера; автоматическое обновление и перезапуск на новом образе запрещены'));
     assert.ok(log.includes('Скачиваю bank:0.1.12'));
     assert.ok(log.includes('  загружено частей: 1 из 1'));
     assert.ok(log.indexOf('Обновляю банк до 0.1.12, около 20 секунд') > log.indexOf('Скачиваю bank:0.1.12'));
@@ -193,10 +195,12 @@ describe('согласие на обновление и контейнеры', (
   let dir = '';
   const runtime = (version: string): Runtime => ({ version, platformUrl: '', dataDir: dir, kitDir: dir, hostDir: dir, composeFile: '', agentIntervalSec: 600, memoryTotalOverrideMb: null });
 
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => { mock.restoreAll(); rmSync(dir, { recursive: true, force: true }); });
 
   function prepare(marker: string | null, profiles: string[] = ['bank']) {
     dir = mkdtempSync(join(tmpdir(), 'pult-reconcile-'));
+    writeConfig(dir, { token: 'sk_fixture', session, lastOkAt: new Date().toISOString(), platformUrl: 'https://platform.test' });
+    mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(session), { status: 200 }));
     if (marker) writeUpdateMarker(dir, marker, profiles);
   }
 

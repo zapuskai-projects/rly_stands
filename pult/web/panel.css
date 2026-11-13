@@ -1,0 +1,81 @@
+:root {
+  color-scheme: light;
+  --ink: #172033;
+  --sub: #647084;
+  --line: #e1e6ed;
+  --soft: #f7f8fa;
+  --paper: #fff;
+  --action: #4f46e5;
+  --good: #047857;
+  --danger: #b91c1c;
+  --warning: #92400e;
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--soft);
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+.shell { margin: 24px auto; max-width: 1320px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; overflow: clip; }
+.top, .nav-tabs, .row { display: flex; align-items: center; gap: 12px; }
+.top { border-bottom: 1px solid var(--line); padding: 18px 24px; }
+.top strong { font-size: 17px; }
+.crumb::before { content: "/ "; }
+.crumb, .sub, #version { color: var(--sub); }
+#connection, #version { margin-left: auto; }
+.nav-tabs { padding: 0 24px; border-bottom: 1px solid var(--line); }
+#nav { display: flex; overflow: auto; gap: 12px; }
+#nav .button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 12px 4px; white-space: nowrap; }
+#nav [aria-current=true] { color: var(--action); border-color: var(--action); }
+.body { display: grid; grid-template-columns: minmax(200px, 26%) minmax(0, 1fr); min-height: 70vh; }
+aside { padding: 24px 16px; border-right: 1px solid var(--line); background: var(--soft); }
+main { padding: 24px; min-width: 0; }
+h1, h2, p { margin: 0; }
+h1 { font-size: 24px; line-height: 1.3; }
+h2 { font-size: 16px; line-height: 1.4; }
+.task-list, .stack, .card, .file-list { display: grid; align-content: start; gap: 12px; }
+.task-list { margin: 14px 0; max-height: 66vh; overflow: auto; gap: 6px; }
+.task-list .button { text-align: left; }
+.task-list [aria-current=true] { border-color: var(--action); color: var(--action); }
+.stack { gap: 16px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); }
+.card { padding: 16px; border: 1px solid var(--line); border-radius: 9px; min-width: 0; overflow-wrap: anywhere; }
+.row { flex-wrap: wrap; }
+button, textarea { font: inherit; }
+.button, .badge { display: inline-flex; align-items: center; justify-content: center; }
+.button { cursor: pointer; text-decoration: none; color: var(--ink); padding: 7px 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; overflow-wrap: anywhere; }
+.button:hover { background: var(--soft); }
+.button:disabled { opacity: .5; cursor: default; }
+.button.primary, .button.danger { color: white; background: var(--action); border-color: var(--action); }
+.button.danger { background: var(--danger); border-color: var(--danger); }
+:focus-visible { outline: 2px solid var(--action); outline-offset: 3px; }
+.badge { font-size: 12px; border: 1px solid var(--line); border-radius: 20px; padding: 3px 8px; color: var(--sub); }
+.ok { color: var(--good); background: #ecfdf5; border-color: #a7f3d0; }
+.warn { color: var(--warning); background: #fffbeb; }
+.notice:not(:empty) { margin: 12px 24px 0; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.notice.bad { color: var(--danger); background: #fff1f2; }
+.notice.info { background: var(--soft); }
+details > summary { cursor: pointer; color: var(--sub); }
+details[open] > summary { margin-bottom: 12px; }
+pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 52vh; }
+.dialog { color: var(--ink); border: 1px solid var(--line); border-radius: 12px; max-width: min(90vw, 600px); max-height: 88vh; padding: 0; }
+.dialog[open] { display: flex; flex-direction: column; }
+.dialog h2, .dialog > .row, .dialog-body { padding: 16px 20px; }
+.dialog-body { overflow: auto; border-block: 1px solid var(--line); }
+.dialog::backdrop { background: #17203366; }
+.editor { width: 100%; min-height: 16rem; resize: vertical; white-space: pre; font: 13px/1.6 ui-monospace, monospace; border: 1px solid var(--line); padding: 12px; }
+.file-list { max-height: 40vh; overflow: auto; }
+.skeleton { height: 1rem; width: 8rem; border-radius: 4px; background: var(--line); }
+.device-code { font: 24px ui-monospace, monospace; }
+@media (max-width: 760px) {
+  .shell { margin: 0; border: 0; border-radius: 0; }
+  .body { grid-template-columns: minmax(0, 1fr); }
+  aside { border: 0; border-bottom: 1px solid var(--line); }
+  .task-list { max-height: 22vh; }
+  main, aside, .top { padding: 16px; }
+  .nav-tabs { padding: 0 12px; }
+  #nav { max-width: 100%; }
+  #version { display: none; }
+  .top { flex-wrap: wrap; }
+  .button { min-height: 40px; }
+}
+

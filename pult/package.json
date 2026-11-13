@@ -8,13 +8,15 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && npm run build:web",
+    "build:web": "tsc -p web/tsconfig.json && node scripts/build-panel.mjs",
     "start": "node dist/main.js",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src",
+    "typecheck": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "lint": "eslint src web",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "test:unit": "tsx --test \"src/**/*.test.ts\"",
-    "test:live": "sh scripts/test-live.sh"
+    "test:live": "sh scripts/test-live.sh",
+    "test:panel": "npm run build && playwright test --config tests/panel.config.ts"
   },
   "dependencies": {
     "@asyncapi/parser": "^3.6.6",
@@ -30,6 +32,7 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@types/node": "^22.20.5",
     "@types/pg": "^8.23.1",
     "eslint": "^9.39.5",

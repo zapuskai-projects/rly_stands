@@ -32,7 +32,7 @@ export async function listKitContainers(): Promise<KitContainer[]> {
     '--format',
     `{{.Names}}|{{.Label "${MODULE_LABEL}"}}|{{.State}}`,
   ]);
-  if (result.code !== 0) return [];
+  if (result.code !== 0) throw new Error('Docker не ответил: состояние стендов неизвестно');
   return result.stdout
     .split('\n')
     .filter(Boolean)
@@ -126,7 +126,7 @@ export async function stopProfile(profile: string): Promise<boolean> {
 
 export async function resetProfile(profile: string): Promise<boolean> {
   const names = await profileContainerNames(profile, false);
-  if (names.length) await run('docker', ['rm', '-f', ...names]);
+  if (names.length && (await run('docker', ['rm', '-f', ...names])).code !== 0) return false;
   const volumes = await run('docker', [
     'volume',
     'ls',
@@ -134,6 +134,7 @@ export async function resetProfile(profile: string): Promise<boolean> {
     '--filter',
     `label=${MODULE_LABEL}=${profile}`,
   ]);
+  if (volumes.code !== 0) return false;
   const ids = volumes.stdout.split('\n').filter(Boolean);
   if (!ids.length) return true;
   return (await run('docker', ['volume', 'rm', ...ids])).code === 0;
@@ -173,4 +174,13 @@ export function recreateService(
     env: composeEnv(runtime),
     cwd: runtime.kitDir,
   });
+}
+
+export async function inspectContainerImage(name: string): Promise<string | null> {
+  const result = await run('docker', ['inspect', '--format', '{{.Config.Image}}', name]);
+  return result.code === 0 ? result.stdout.trim() || null : null;
+}
+
+export async function startExistingContainers(names: string[]): Promise<boolean> {
+  return names.length > 0 && (await run('docker', ['start', ...names])).code === 0;
 }

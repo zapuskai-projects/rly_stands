@@ -115,6 +115,17 @@ export function startTask(auth: PlatformAuth, labId: string, primitives: string[
   return call<TaskDefinition>(auth, `/tasks/${encodeURIComponent(labId)}/start`, { method: 'POST', primitives });
 }
 
+export type KitTaskState = {
+  labId: string; project: Session['tasks'][number]['project']; input: string;
+  fields: unknown[]; requiredFields: string[]; report: Record<string, string> | null;
+  modules: Array<{ key: string; title: string }>;
+  attemptId: string | null; status: string; label: string | null; result: unknown;
+};
+
+export function fetchTaskState(auth: PlatformAuth, labId: string) {
+  return call<KitTaskState>(auth, `/tasks/${encodeURIComponent(labId)}/state`, { method: 'GET', timeoutMs: 10000 });
+}
+
 export function checkAttempt(auth: PlatformAuth, attemptId: string, observations: Record<string, unknown>) {
   return call<CheckOutcome>(auth, `/attempts/${encodeURIComponent(attemptId)}/check`, {
     method: 'POST',

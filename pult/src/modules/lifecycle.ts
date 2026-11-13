@@ -1,6 +1,7 @@
 import type { Runtime } from '../config';
 import {
   composeUp,
+  startExistingContainers,
   listKitContainers,
   memoryTotalMb,
   profileState,
@@ -11,6 +12,7 @@ import type { Session, SessionModule } from '../platform/types';
 import { clearStarting, markStarting } from '../store/starting';
 import { ensureBankSecret } from '../store/stores';
 import { compareVersions, UPDATE_HINT } from '../util/version';
+import { compatibilityRefusal, existingLaunch } from './compatibility';
 import { dropBankDatabase } from './bank';
 import { requiredModules } from './requires';
 import { checkMemory, memoryRefusal } from './memory';
@@ -65,6 +67,7 @@ async function startDependencies(
   session: Session,
   module: SessionModule,
   progress: Progress,
+  beforeStep?: () => Promise<void>,
 ): Promise<boolean> {
   const { modules, missing } = requiredModules(session, module);
   if (missing.length) {
@@ -75,7 +78,7 @@ async function startDependencies(
     const containers = await listKitContainers();
     if (profileState(containers, dependency.profile) === 'running') continue;
     progress.info(`${module.title}: сначала запускаю «${dependency.title}»`);
-    if (!(await startModule(runtime, session, dependency, progress, { dependency: true }))) return false;
+    if (!(await startModule(runtime, session, dependency, progress, { dependency: true, beforeStep }))) return false;
   }
   return true;
 }
@@ -85,7 +88,7 @@ export async function startModule(
   session: Session,
   module: SessionModule,
   progress: Progress,
-  options: { dependency?: boolean } = {},
+  options: { dependency?: boolean; beforeStep?: () => Promise<void> } = {},
 ): Promise<boolean> {
   if (options.dependency) return launchModule(runtime, session, module, progress, options);
   markStarting(runtime.dataDir, module.profile);
@@ -101,7 +104,7 @@ async function launchModule(
   session: Session,
   module: SessionModule,
   progress: Progress,
-  options: { dependency?: boolean },
+  options: { dependency?: boolean; beforeStep?: () => Promise<void> },
 ): Promise<boolean> {
   if (!module.allowed && !options.dependency) {
     progress.fail(`${module.title}: ${module.reason ?? 'недоступен'}`);
@@ -112,16 +115,22 @@ async function launchModule(
     progress.fail(gate);
     return false;
   }
-  if (!(await startDependencies(runtime, session, module, progress))) return false;
+  const incompatible = await compatibilityRefusal(runtime, session, [module]);
+  if (incompatible) { progress.fail(incompatible); return false; }
+  if (!(await startDependencies(runtime, session, module, progress, options.beforeStep))) return false;
   const refusal = await memoryVerdictFor(runtime, session, module);
   if (refusal) {
     progress.fail(`${module.title}: ${refusal}`);
     return false;
   }
+  await options.beforeStep?.();
   if (module.profile === 'bank') ensureBankSecret(runtime.dataDir);
   progress.info(`${module.title}: запускаю контейнеры`);
   const output: string[] = [];
-  const code = await composeUp(runtime, [module.profile], (text) => {
+  const launch = await existingLaunch(runtime, module);
+  if (launch.kind === 'blocked') { progress.fail(launch.reason); return false; }
+  await options.beforeStep?.();
+  const code = launch.kind === 'existing' ? ((await startExistingContainers(launch.names)) ? 0 : 1) : await composeUp(runtime, [module.profile], (text) => {
     output.push(text);
     if (COMPOSE_LINE.test(text) && !PORT_BUSY.test(text)) progress.info(`  ${text}`);
   });
@@ -150,10 +159,34 @@ export async function stopModule(module: SessionModule, progress: Progress): Pro
   return ok;
 }
 
-export async function resetModule(module: SessionModule, progress: Progress): Promise<boolean> {
-  const ok = await resetProfile(module.profile);
-  if (module.profile === 'bank') await dropBankDatabase();
+export async function resetModule(module: SessionModule, progress: Progress, deps = {
+  reset: () => resetProfile(module.profile),
+  dropBank: dropBankDatabase,
+}): Promise<boolean> {
+  const ok = await deps.reset();
+  if (ok && module.profile === 'bank') await deps.dropBank();
   if (ok) progress.ok(`${module.title}: контейнеры и данные удалены`);
   else progress.fail(`${module.title}: не удалось удалить данные`);
   return ok;
+}
+
+export type RestartDeps = {
+  compatible: () => Promise<string | null>;
+  stop: () => Promise<boolean>;
+  start: () => Promise<boolean>;
+};
+
+export async function restartModule(runtime: Runtime, session: Session, module: SessionModule, progress: Progress, deps: RestartDeps = {
+  compatible: async () => (await compatibilityRefusal(runtime, session, [module])) ?? memoryVerdictFor(runtime, session, module),
+  stop: () => stopModule(module, progress),
+  start: () => startModule(runtime, session, module, progress, { beforeStep }),
+}, beforeStep?: () => Promise<void>): Promise<boolean> {
+  const gate = versionGate(runtime, session);
+  if (gate || !module.allowed) { progress.fail(gate ?? module.reason ?? 'Стенд недоступен'); return false; }
+  const refusal = await deps.compatible();
+  if (refusal) { progress.fail(refusal); return false; }
+  await beforeStep?.();
+  if (!(await deps.stop())) return false;
+  await beforeStep?.();
+  return deps.start();
 }

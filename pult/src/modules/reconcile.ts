@@ -7,6 +7,7 @@ import { pullTracker } from './pull';
 import { READINESS, waitReady } from './readiness';
 
 export type ComposeService = { service: string; container: string; image: string; profiles: string[]; dependsOn: string[] };
+export const updateServiceKey = (item: StaleService): string => JSON.stringify([item.wanted.container, item.running.image, item.wanted.image]);
 export type StaleService = { wanted: ComposeService; running: RunningImage };
 
 const AGENT_TITLE = 'служебный агент';
@@ -100,7 +101,7 @@ function titleOf(session: Session, profile: string): string {
 export function manualUpdateNote(session: Session, item: StaleService): string {
   const profile = item.running.profile;
   const title = session.modules.find((module) => module.profile === profile)?.title ?? item.wanted.container;
-  return `${title} обновится, когда вы его перезапустите${PROFILES_WITH_DATA_IN_LAYER.has(profile) ? ' (данные внутри сбросятся)' : ''}`;
+  return PROFILES_WITH_DATA_IN_LAYER.has(profile) ? `${title}: требуется отдельный перенос данных внутри контейнера; автоматическое обновление и перезапуск на новом образе запрещены` : `${title} обновится, когда вы его перезапустите`;
 }
 
 function missingRequirements(session: Session, profile: string, active: Set<string>): string[] {
@@ -132,10 +133,15 @@ export async function reconcileContainers(
   progress: Progress,
   deps: ReconcileDeps,
   awaited: string[] = [],
+  approved?: string[],
 ): Promise<boolean> {
   const stale = await staleContainers(deps, version);
   if (!stale) {
     progress.fail(CHECK_FAILED);
+    return false;
+  }
+  if (approved && stale.some((item) => !approved.includes(updateServiceKey(item)))) {
+    progress.fail('Состав или образы стендов изменились. Запросите новый план обновления.');
     return false;
   }
   for (const item of stale.filter((entry) => !recreatedAutomatically(entry))) progress.info(manualUpdateNote(session, item));

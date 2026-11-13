@@ -1,3 +1,5 @@
+import { sessionAfterLogin, waitForApproval } from '../actions/device';
+export { sessionAfterLogin, waitForApproval, type WaitOutcome } from '../actions/device';
 import { password } from '@inquirer/prompts';
 import type { Runtime } from '../config';
 import { fetchSession } from '../platform/client';
@@ -6,21 +8,16 @@ import {
   generateKitToken,
   startDeviceLogin,
   tokenFingerprint,
-  type DeviceCall,
-  type DeviceLoginStatus,
 } from '../platform/device';
 import { supportedPrimitives } from '../platform/primitives';
-import type { Session, SessionResult } from '../platform/types';
-import { readConfig, writeConfig } from '../store/stores';
+import { type SessionContext } from '../actions/session';
+import { routeLogin } from '../panel/gateway';
+export type { SessionContext } from '../actions/session';
 import { requestOpen } from '../util/open-url';
 import { color, errorLine, line } from '../util/out';
 import { formatShortDate } from './format';
-
-export type SessionContext = {
-  session: Session;
-  stale: boolean;
-  staleSince: string | null;
-};
+import { dispatchAction } from '../actions/dispatcher';
+import { consoleProgress } from './progress';
 
 async function readToken(): Promise<string> {
   if (process.stdin.isTTY) {
@@ -29,38 +26,6 @@ async function readToken(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
   return Buffer.concat(chunks).toString('utf8').split(/\r?\n/)[0]?.trim() ?? '';
-}
-
-export type WaitOutcome = 'APPROVED' | 'DENIED' | 'EXPIRED' | { error: string };
-
-type WaitOptions = {
-  intervalMs: number;
-  deadline: number;
-  now?: () => number;
-  sleep?: (ms: number) => Promise<void>;
-  onRetry?: (message: string) => void;
-};
-
-/** Ждёт, пока человек подтвердит код на сайте: сбои сети переживает до конца срока кода. */
-export async function waitForApproval(
-  poll: () => Promise<DeviceCall<DeviceLoginStatus>>,
-  options: WaitOptions,
-): Promise<WaitOutcome> {
-  const now = options.now ?? Date.now;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  let warned = false;
-  while (now() < options.deadline) {
-    await sleep(options.intervalMs);
-    const status = await poll();
-    if (!status.ok) {
-      if (!status.retry) return { error: status.message };
-      if (!warned) options.onRetry?.(status.message);
-      warned = true;
-      continue;
-    }
-    if (status.value !== 'PENDING') return status.value;
-  }
-  return 'EXPIRED';
 }
 
 async function deviceToken(runtime: Runtime): Promise<string | null> {
@@ -90,21 +55,6 @@ async function deviceToken(runtime: Runtime): Promise<string | null> {
 
 export type LoginOptions = { paste?: boolean };
 
-const SESSION_RETRIES = 3;
-
-/** Сразу после входа платформа может мигнуть: пробуем ещё пару раз, прежде чем сдаться. */
-export async function sessionAfterLogin(
-  fetch: () => Promise<SessionResult>,
-  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-): Promise<SessionResult> {
-  let result = await fetch();
-  for (let attempt = 1; attempt < SESSION_RETRIES && !result.ok && result.kind === 'unreachable'; attempt += 1) {
-    await sleep(3000);
-    result = await fetch();
-  }
-  return result;
-}
-
 export async function login(runtime: Runtime, options: LoginOptions = {}): Promise<SessionContext | null> {
   const token = options.paste ? await readToken() : await deviceToken(runtime);
   if (!token) {
@@ -114,8 +64,7 @@ export async function login(runtime: Runtime, options: LoginOptions = {}): Promi
   const primitives = await supportedPrimitives();
   const result = await sessionAfterLogin(() => fetchSession(runtime.platformUrl, token, runtime.version, primitives));
   if (!result.ok && result.kind === 'unreachable' && !options.paste) {
-    // Вход уже подтверждён на сайте: токен сохраняем, иначе он потеряется, а на платформе останется.
-    writeConfig(runtime.dataDir, { platformUrl: runtime.platformUrl, token, session: null, lastOkAt: null });
+    await routeLogin(runtime, token, null);
     errorLine(`${result.message}. Пульт подключён — запустите ./stand ещё раз, когда платформа ответит.`);
     return null;
   }
@@ -123,12 +72,7 @@ export async function login(runtime: Runtime, options: LoginOptions = {}): Promi
     errorLine(result.message);
     return null;
   }
-  writeConfig(runtime.dataDir, {
-    platformUrl: runtime.platformUrl,
-    token,
-    session: result.session,
-    lastOkAt: new Date().toISOString(),
-  });
+  await routeLogin(runtime, token, result.session);
   line(
     `Здравствуйте, ${result.session.user.name}. Токен действует до ${formatShortDate(result.session.token.expiresAt)}.`,
   );
@@ -139,38 +83,14 @@ export async function loadSession(
   runtime: Runtime,
   interactive: boolean,
 ): Promise<SessionContext | null> {
-  const config = readConfig(runtime.dataDir);
-  if (!config.token) {
-    if (!interactive) {
-      errorLine('Токен не задан. Выполните: ./stand login');
-      return null;
-    }
-    line('Первый запуск: подключаю пульт к вашему аккаунту.');
-    return login(runtime);
+  const refreshed = await dispatchAction({ runtime, progress: consoleProgress }, { action: 'platform.refresh' });
+  const context = refreshed.sessionContext;
+  if (context) {
+    if (context.stale && refreshed.message) errorLine(`${refreshed.message}. Показываю данные от ${formatShortDate(context.staleSince!, true)}.`);
+    return context;
   }
-  const result = await fetchSession(
-    config.platformUrl ?? runtime.platformUrl,
-    config.token,
-    runtime.version,
-    await supportedPrimitives(),
-  );
-  if (result.ok) {
-    writeConfig(runtime.dataDir, { session: result.session, lastOkAt: new Date().toISOString() });
-    return { session: result.session, stale: false, staleSince: null };
-  }
-  if (result.kind === 'rejected') {
-    writeConfig(runtime.dataDir, { token: null });
-    errorLine(result.message);
-    if (!interactive) return null;
-    line('Подключите пульт заново.');
-    return login(runtime);
-  }
-  const graceMs = (config.session?.kit.offlineGraceHours ?? 0) * 3600 * 1000;
-  const since = config.lastOkAt ? Date.parse(config.lastOkAt) : null;
-  if (config.session && since !== null && Date.now() - since <= graceMs) {
-    errorLine(`${result.message}. Показываю данные от ${formatShortDate(config.lastOkAt!, true)}.`);
-    return { session: config.session, stale: true, staleSince: config.lastOkAt };
-  }
-  errorLine(result.message);
-  return null;
+  if (refreshed.message) errorLine(refreshed.message);
+  if (!interactive || ['ACTION_FAILED', 'PLATFORM_UNREACHABLE'].includes(refreshed.code ?? '')) return null;
+  line('Подключите пульт к своему аккаунту.');
+  return login(runtime);
 }

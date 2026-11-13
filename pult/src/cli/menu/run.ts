@@ -1,12 +1,12 @@
 import { emitKeypressEvents } from 'node:readline';
 import type { Runtime } from '../../config';
 import { listKitContainers, memoryTotalMb, profileState, type KitContainer } from '../../docker/kit-docker';
-import { startModule, stopModule, type Progress } from '../../modules/lifecycle';
+import type { Progress } from '../../modules/lifecycle';
+import { dispatchAction, type ActionRequest } from '../../actions/dispatcher';
 import type { SessionModule } from '../../platform/types';
 import { buildRows, type ModuleRow } from '../../modules/view';
-import { fetchSession } from '../../platform/client';
-import { supportedPrimitives } from '../../platform/primitives';
-import { readConfig, readCurrentTask, takeNotices, writeConfig } from '../../store/stores';
+import { readCurrentTask } from '../../store/stores';
+import { routeNotices } from '../../panel/gateway';
 import { color, screen, line, write } from '../../util/out';
 import { formatShortDate } from '../format';
 import { collectingProgress } from '../progress';
@@ -29,11 +29,10 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
   let rows: ModuleRow[] = [];
   let mode: MenuMode = 'modules';
   let selected = 0;
-  const primitives = await supportedPrimitives();
   let message: string | null = null;
   let busy = false;
   let lastSessionAt = Date.now();
-  const notices = takeNotices(runtime.dataDir).map(
+  const notices = (await routeNotices(runtime)).map(
     (notice) => `${notice.title ?? 'Стенд'} остановлен: ${notice.reason}`,
   );
 
@@ -69,28 +68,15 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
   };
 
   const refreshSession = async (): Promise<boolean> => {
-    const config = readConfig(runtime.dataDir);
-    if (!config.token) return false;
-    const result = await fetchSession(
-      config.platformUrl ?? runtime.platformUrl,
-      config.token,
-      runtime.version,
-      primitives,
-    );
+    const refreshed = await dispatchAction({ runtime, progress: { info: () => undefined, ok: () => undefined, fail: () => undefined } }, { action: 'platform.refresh' });
     lastSessionAt = Date.now();
-    if (result.ok) {
-      ctx = { session: result.session, stale: false, staleSince: null };
-      writeConfig(runtime.dataDir, { session: result.session, lastOkAt: new Date().toISOString() });
-      return true;
-    }
-    if (result.kind === 'rejected') {
-      writeConfig(runtime.dataDir, { token: null });
-      message = result.message;
-      return false;
-    }
-    ctx = { ...ctx, stale: true };
-    return true;
+    if (refreshed.sessionContext) { ctx = refreshed.sessionContext; return true; }
+    message = refreshed.message ?? null;
+    return false;
   };
+
+  const execute = async (request: ActionRequest, progress: Progress) =>
+    dispatchAction({ runtime, session: ctx.session, stale: ctx.stale, progress }, request);
 
   const offerIdleStop = (module: SessionModule, containers: KitContainer[], progress: Progress) =>
     offerStopIdle({
@@ -99,7 +85,7 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
       containers,
       interactive: isInteractive(),
       ask: askYesNo,
-      stop: (idle) => stopModule(idle, progress),
+      stop: async (idle) => (await execute({ action: 'module.stop', moduleKey: idle.key }, progress)).ok,
     });
 
   const toggle = async (): Promise<boolean> => {
@@ -115,8 +101,8 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
     const state = profileState(containers, module.profile);
     if (state === 'stopped') {
       await offerIdleStop(module, containers, progress);
-      await startModule(runtime, ctx.session, module, progress);
-    } else await stopModule(module, progress);
+      await execute({ action: 'module.start', moduleKey: module.key }, progress);
+    } else await execute({ action: 'module.stop', moduleKey: module.key }, progress);
     message = summary();
     await refreshRows();
     return true;
@@ -128,13 +114,12 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
     screen.clear();
     const { progress, summary } = collectingProgress();
     if (!running.length) progress.info('Все стенды уже остановлены');
-    for (const module of running) await stopModule(module, progress);
+    if (running.length) await execute({ action: 'modules.stopAll' }, progress);
     message = summary();
     await refreshRows();
     return true;
   };
 
-  /** Остановить и запустить заново: помогает, когда стенд завис или запущен не полностью. */
   const restart = async (): Promise<boolean> => {
     const row = rows[selected];
     if (!row) return true;
@@ -143,10 +128,7 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
     if (!module) return true;
     screen.clear();
     const { progress, summary } = collectingProgress();
-    const containers = await listKitContainers();
-    if (profileState(containers, module.profile) !== 'stopped') await stopModule(module, progress);
-    else await offerIdleStop(module, containers, progress);
-    await startModule(runtime, ctx.session, module, progress);
+    await execute({ action: 'module.restart', moduleKey: module.key }, progress);
     message = summary();
     await refreshRows();
     return true;
@@ -169,7 +151,7 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
     if (!(await refreshSession())) return false;
     screen.clear();
     const { progress, summary } = collectingProgress();
-    await startTaskFlow(runtime, ctx.session, task.id, progress);
+    await startTaskFlow(runtime, ctx.session, task.id, progress, { stale: ctx.stale });
     message = summary();
     await waitKey();
     await refreshSession();
@@ -181,7 +163,7 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
     if (!(await refreshSession())) return false;
     screen.clear();
     const { progress, summary } = collectingProgress();
-    await restartTaskFlow(runtime, ctx.session, progress);
+    await restartTaskFlow(runtime, ctx.session, progress, { stale: ctx.stale });
     message = summary();
     await waitKey();
     await refreshSession();
@@ -209,7 +191,7 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
       return true;
     }
     const updateNote = asked === 'failed' ? summary() : null;
-    const outcome = await checkFlow(runtime, progress);
+    const outcome = await checkFlow(runtime, progress, ctx.session, ctx.stale);
     message = withUpdateNote(updateNote, outcome ? outcome.result.message : (summary() ?? ''));
     await waitKey();
     await refreshSession();
@@ -217,7 +199,9 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
     return true;
   };
 
-  await refreshRows();
+  try { await refreshRows(); } catch (error) {
+    message = `Состояние стендов неизвестно: ${error instanceof Error ? error.message : String(error)}`;
+  }
   return new Promise<MenuResult>((resolve) => {
     const finish = () => {
       clearInterval(timer);
@@ -231,77 +215,88 @@ export async function runMenu(runtime: Runtime, initial: SessionContext, offers:
 
     const onKey = async (_chunk: string, key: Key) => {
       if (busy) return;
-      const action = keyAction(key, pendingVersion() !== null);
-      if (action === 'interrupt') {
-        finish();
-        return;
+      try {
+        const action = keyAction(key, pendingVersion() !== null);
+        if (action === 'interrupt') {
+          finish();
+          return;
+        }
+        if (action === 'back' && mode === 'tasks') {
+          mode = 'modules';
+          selected = 0;
+        } else if (action === 'back') {
+          finish();
+          return;
+        } else if (action === 'tasks') {
+          mode = mode === 'tasks' ? 'modules' : 'tasks';
+          selected = 0;
+        } else if (action === 'check') {
+          busy = true;
+          const alive = await checkCurrent();
+          busy = false;
+          if (!alive || updateRequested) {
+            draw();
+            finish();
+            return;
+          }
+        } else if (action === 'update') {
+          busy = true;
+          const alive = await updateNow();
+          busy = false;
+          if (!alive || updateRequested) {
+            draw();
+            finish();
+            return;
+          }
+        } else if (action === 'restart' && mode === 'tasks') {
+          busy = true;
+          const alive = await restartCurrentTask();
+          busy = false;
+          if (!alive) {
+            draw();
+            finish();
+            return;
+          }
+        } else if ((action === 'stopAll' || action === 'restart') && mode === 'modules') {
+          busy = true;
+          const alive = action === 'stopAll' ? await stopAll() : await restart();
+          busy = false;
+          if (!alive) {
+            draw();
+            finish();
+            return;
+          }
+        } else if (action === 'up' && listLength()) selected = (selected - 1 + listLength()) % listLength();
+        else if (action === 'down' && listLength()) selected = (selected + 1) % listLength();
+        else if (action === 'enter') {
+          busy = true;
+          const alive = mode === 'tasks' ? await startSelectedTask() : await toggle();
+          busy = false;
+          if (!alive) {
+            draw();
+            finish();
+            return;
+          }
+        } else return;
+        draw();
+      } catch (error) {
+        busy = false;
+        message = `Состояние стендов неизвестно: ${error instanceof Error ? error.message : String(error)}. Повторите действие после восстановления Docker.`;
+        rows = [];
+        draw();
       }
-      if (action === 'back' && mode === 'tasks') {
-        mode = 'modules';
-        selected = 0;
-      } else if (action === 'back') {
-        finish();
-        return;
-      } else if (action === 'tasks') {
-        mode = mode === 'tasks' ? 'modules' : 'tasks';
-        selected = 0;
-      } else if (action === 'check') {
-        busy = true;
-        const alive = await checkCurrent();
-        busy = false;
-        if (!alive || updateRequested) {
-          draw();
-          finish();
-          return;
-        }
-      } else if (action === 'update') {
-        busy = true;
-        const alive = await updateNow();
-        busy = false;
-        if (!alive || updateRequested) {
-          draw();
-          finish();
-          return;
-        }
-      } else if (action === 'restart' && mode === 'tasks') {
-        busy = true;
-        const alive = await restartCurrentTask();
-        busy = false;
-        if (!alive) {
-          draw();
-          finish();
-          return;
-        }
-      } else if ((action === 'stopAll' || action === 'restart') && mode === 'modules') {
-        busy = true;
-        const alive = action === 'stopAll' ? await stopAll() : await restart();
-        busy = false;
-        if (!alive) {
-          draw();
-          finish();
-          return;
-        }
-      } else if (action === 'up' && listLength()) selected = (selected - 1 + listLength()) % listLength();
-      else if (action === 'down' && listLength()) selected = (selected + 1) % listLength();
-      else if (action === 'enter') {
-        busy = true;
-        const alive = mode === 'tasks' ? await startSelectedTask() : await toggle();
-        busy = false;
-        if (!alive) {
-          draw();
-          finish();
-          return;
-        }
-      } else return;
-      draw();
     };
 
     const timer = setInterval(async () => {
       if (busy) return;
       busy = true;
-      if (Date.now() - lastSessionAt > SESSION_REFRESH_MS) await refreshSession();
-      await refreshRows();
-      busy = false;
+      try {
+        if (Date.now() - lastSessionAt > SESSION_REFRESH_MS) await refreshSession();
+        await refreshRows();
+      } catch (error) {
+        message = `Состояние стендов неизвестно: ${error instanceof Error ? error.message : String(error)}. Ожидаю восстановления Docker.`;
+        rows = [];
+      } finally { busy = false; }
       draw();
     }, POLL_MS);
 
