@@ -7,6 +7,7 @@ import { loadRuntime } from '../../src/config';
 import { Controller } from '../../src/panel/controller';
 import { mintBootstrap } from '../../src/panel/auth';
 import { Router } from '../../src/panel/router';
+import type { Snapshot } from '../../web/types';
 
 let controller: Controller;
 let server: Server;
@@ -70,4 +71,42 @@ test('редактор сохраняет введённый текст и об�
   await page.keyboard.press('Escape');
   await expect(editor).toHaveValue('amount: 200');
   expect(readFileSync(path, 'utf8')).toBe('amount: 175');
+});
+
+test('фоновое обновление сохраняет раскрытые блоки только у текущего задания', async ({ page }, info) => {
+  let revision = 0;
+  let taskId = 'task-1';
+  await page.route('**/api/state', async (route) => {
+    const snapshot: Snapshot = {
+      version: '1.0.0', checkedAt: new Date().toISOString(),
+      policy: { connected: true, stale: false, allowed: true },
+      modules: [], queue: [], notices: [],
+      activeTask: { labId: taskId, title: `Задание ${revision}` },
+      tasks: [{ id: taskId, title: `Задание ${revision}`, accepted: false, modules: [], lastCheck: { state: 'known' } }],
+    };
+    await route.fulfill({ json: snapshot });
+  });
+  const refresh = () => page.evaluate(() => { window.dispatchEvent(new Event('online')); });
+  await page.goto('/#bootstrap=' + mintBootstrap(controller.store));
+  await expect(page.getByRole('heading', { name: 'Задание 0', exact: true })).toBeVisible();
+  const preparation = page.getByText('Подготовка сценария', { exact: true });
+  const restart = page.getByRole('button', { name: 'Подготовить заново', exact: true });
+  await preparation.click();
+  await expect(restart).toBeVisible();
+  revision += 1;
+  await refresh();
+  await expect(page.getByRole('heading', { name: 'Задание 1', exact: true })).toBeVisible();
+  await expect(restart).toBeVisible();
+  await page.screenshot({ path: info.outputPath('expanded-after-refresh.png') });
+  await preparation.click();
+  revision += 1;
+  await refresh();
+  await expect(page.getByRole('heading', { name: 'Задание 2', exact: true })).toBeVisible();
+  await expect(restart).toBeHidden();
+  await preparation.click();
+  taskId = 'task-2';
+  revision += 1;
+  await refresh();
+  await expect(page.getByRole('heading', { name: 'Задание 3', exact: true })).toBeVisible();
+  await expect(restart).toBeHidden();
 });
