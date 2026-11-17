@@ -24,6 +24,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit
+      - name: Автоматическое назначение версии и повтор выпуска
+        run: node --test ../scripts/release.test.mjs
 
   panel:
     runs-on: ubuntu-latest
@@ -140,3 +142,11 @@ jobs:
         if: failure()
         run: |
           grep -nE '✖|AssertionError|Error \[|actual:|expected:|timed out|ECONNREFUSED' test.log | head -40 | while IFS= read -r row; do echo "::error::$row"; done
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [pult, panel, compose, images, bank]
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/release.yml

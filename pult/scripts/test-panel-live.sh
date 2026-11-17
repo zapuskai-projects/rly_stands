@@ -47,7 +47,13 @@ export STAND_BANK_IMAGE=stands-kit-bank:panel-test
 export STAND_NO_BROWSER=1
 sh "$KIT/stand" panel > "$CASE/launcher.log" 2>&1 &
 LAUNCHER=$!
-trap 'kill "$LAUNCHER" 2>/dev/null || true' EXIT
+finish() {
+  code=$?
+  if [ "$code" -ne 0 ]; then docker logs stands-kit-linux-server >&2 2>&1 || true; fi
+  kill "$LAUNCHER" 2>/dev/null || true
+  exit "$code"
+}
+trap finish EXIT
 TRIES=0
 until curl -fsS --max-time 2 http://127.0.0.1:18490/api/meta >/dev/null 2>&1; do
   TRIES=$((TRIES+1))

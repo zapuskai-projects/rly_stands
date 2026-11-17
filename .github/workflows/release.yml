@@ -1,13 +1,15 @@
 name: release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
+
+concurrency:
+  group: stand-kit-release
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -15,28 +17,30 @@ env:
 
 jobs:
   images:
-    # Все на Mac с M-чипами: собираем только arm64 и на ARM-сервере, без эмулятора.
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-
-      - name: Версия тега совпадает с VERSION
-        run: |
-          expected="v$(tr -d ' \r\n' < VERSION)"
-          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
-            echo "Тег $GITHUB_REF_NAME не совпадает с VERSION ($expected)" >&2
-            exit 1
-          fi
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Подготовить следующую версию
+        id: version
+        run: node scripts/release.mjs
 
       - uses: docker/setup-buildx-action@v3
+        if: steps.version.outputs.publish == 'true'
 
       - uses: docker/login-action@v3
+        if: steps.version.outputs.publish == 'true'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Зеркало сторонних образов
+        if: steps.version.outputs.build == 'true'
         run: |
           while read -r source target; do
             case "$source" in ''|'#'*) continue ;; esac
@@ -47,36 +51,56 @@ jobs:
             docker buildx imagetools create --tag "$REGISTRY/$OWNER/mirror/$target" "$source"
           done < images/mirror.txt
 
-      - name: Версия образов
-        id: version
-        run: echo "value=$(tr -d ' \r\n' < VERSION)" >> "$GITHUB_OUTPUT"
-
       - name: Пульт
+        if: steps.version.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: pult
           platforms: linux/arm64
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/stands-kit-pult:${{ steps.version.outputs.value }}
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/stands-kit-pult:${{ steps.version.outputs.version }}
           cache-from: type=gha,scope=pult
           cache-to: type=gha,mode=max,scope=pult
 
       - name: Linux-сервер для тестировщика
+        if: steps.version.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: images/linux-server
           platforms: linux/arm64
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/stands-kit-linux:${{ steps.version.outputs.value }}
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/stands-kit-linux:${{ steps.version.outputs.version }}
           cache-from: type=gha,scope=linux
           cache-to: type=gha,mode=max,scope=linux
 
       - name: Учебный банк
+        if: steps.version.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: bank
           platforms: linux/arm64
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/stands-kit-bank:${{ steps.version.outputs.value }}
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/stands-kit-bank:${{ steps.version.outputs.version }}
           cache-from: type=gha,scope=bank
           cache-to: type=gha,mode=max,scope=bank
+
+      - name: Проверить образы при повторе объявления
+        if: steps.version.outputs.publish == 'true' && steps.version.outputs.build == 'false'
+        env:
+          KIT_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for image in stands-kit-pult stands-kit-linux stands-kit-bank; do
+            docker buildx imagetools inspect "$REGISTRY/$OWNER/$image:$KIT_VERSION" >/dev/null
+          done
+
+      - name: Опубликовать версию и объявить обновление
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KIT_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$KIT_VERSION"
+          if ! gh release view "v$KIT_VERSION" >/dev/null 2>&1; then
+            notes=$(printf 'Набор стендов %s готов. Запустите ./stand и подтвердите обновление.\n\n<!-- stands-kit-images-ready: %s -->' "$KIT_VERSION" "$KIT_VERSION")
+            gh release create "v$KIT_VERSION" --verify-tag --title "Набор стендов $KIT_VERSION" --notes "$notes" --latest
+          fi

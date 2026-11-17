@@ -21,6 +21,7 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scenarios /opt/scenarios
 RUN chmod 0440 /etc/sudoers.d/student \
   && chmod 0755 /opt/app/run.sh /usr/local/bin/entrypoint.sh \
+  && chmod 0644 /opt/app/app.py \
   && find /opt/scenarios -name '*.sh' -exec chmod 0755 {} + \
   && chown root:student /etc/app /etc/nginx/conf.d /etc/app/app.env /etc/nginx/conf.d/app.conf \
   && chmod 0775 /etc/app /etc/nginx/conf.d \
