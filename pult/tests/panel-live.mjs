@@ -28,9 +28,12 @@ const action = async (button, name, checked = false) => {
   await expect.poll(async () => {
     try {
       last = await page.evaluate(async (id) => (await fetch('/api/operations/' + id)).json(), id);
-      return ['SUCCEEDED', 'FAILED', 'INTERRUPTED', 'CANCELLED', 'WAITING_CONFIRMATION'].includes(last.state);
+      return ['SUCCEEDED', 'FAILED', 'INTERRUPTED', 'CANCELLED'].includes(last.state) ||
+        last.state === 'WAITING_CONFIRMATION' && last.action?.action !== 'update.prepare';
     } catch { return false; }
-  }, { timeout: 300000, intervals: [1000, 2000] }).toBe(true);
+  }, { timeout: 300000, intervals: [1000, 2000] }).toBe(true).catch((cause) => {
+    throw new Error('Операция не завершилась: ' + JSON.stringify(last), { cause });
+  });
   assert.equal(last.state, 'SUCCEEDED', JSON.stringify(last, null, 2));
   return id;
 };
