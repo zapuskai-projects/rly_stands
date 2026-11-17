@@ -36,7 +36,7 @@ const task: SessionTask = {
 
 const session: Session = {
   user: { name: 'Юлия' },
-  token: { expiresAt: '2026-11-03T12:00:00Z' },
+  token: { expiresAt: '2099-01-01T00:00:00Z' },
   kit: { latestVersion: '0.1.0', minVersion: '0.1.0', offlineGraceHours: 24 },
   modules: [],
   tasks: [task],
@@ -70,6 +70,7 @@ describe('начать текущую задачу заново', () => {
   let bankStatus = 200;
   let resets = 0;
   let bankWrites = 0;
+  let platformSession = session;
 
   const runtime = (): Runtime => ({
     version: '0.1.0',
@@ -84,6 +85,11 @@ describe('начать текущую задачу заново', () => {
 
   before(async () => {
     server = createServer((request, response) => {
+      if (request.url === '/api/stand-kit/session') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify(platformSession));
+        return;
+      }
       if (request.method === 'POST' && request.url === '/api/stand-kit/tasks/lab-limit/start') {
         starts += 1;
         response.setHeader('Content-Type', 'application/json');
@@ -141,6 +147,7 @@ describe('начать текущую задачу заново', () => {
   });
 
   function prepare() {
+    platformSession = session;
     root = mkdtempSync(join(tmpdir(), 'pult-restart-'));
     mkdirSync(join(root, 'data'), { recursive: true });
     mkdirSync(join(root, 'kit', 'work'), { recursive: true });
@@ -219,6 +226,7 @@ describe('начать текущую задачу заново', () => {
   it('чужая метка без локальной записи не стирается даже при новой попытке', async () => {
     prepareBank('another-attempt');
     const fresh = { ...session, tasks: [{ ...task, attemptId: null, status: 'NOT_STARTED' as const }] };
+    platformSession = fresh;
     assert.equal(await quietly(() => startTaskFlow(runtime(), fresh, task.id, recorder().progress)), false);
     assert.equal(resets, 0);
     const questions: string[] = [];
@@ -233,6 +241,7 @@ describe('начать текущую задачу заново', () => {
   it('первый старт новой задачи готовит пустой банк и сохраняет существующие файлы', async () => {
     prepareBank(null);
     const fresh = { ...session, tasks: [{ ...task, attemptId: null, status: 'NOT_STARTED' as const }] };
+    platformSession = fresh;
     assert.equal(await quietly(() => startTaskFlow(runtime(), fresh, task.id, recorder().progress)), true);
     assert.equal(resets, 1);
     assert.equal(bankWrites, 1);
@@ -243,6 +252,7 @@ describe('начать текущую задачу заново', () => {
     prepareBank(null);
     rmSync(join(root, 'kit', 'work', 'seed-state.txt'));
     const fresh = { ...session, tasks: [{ ...task, attemptId: null, status: 'NOT_STARTED' as const }] };
+    platformSession = fresh;
     assert.equal(await quietly(() => startTaskFlow(runtime(), fresh, task.id, recorder().progress)), true);
     assert.equal(seedState(), 'подготовка 1');
   });
@@ -320,7 +330,7 @@ describe('начать текущую задачу заново', () => {
     writeConfig(join(root, 'data'), { platformUrl: 'http://127.0.0.1:1' });
     const { progress, failures } = recorder();
     assert.equal(await quietly(() => restartTaskFlow(runtime(), session, progress, { yes: true })), false);
-    assert.match(failures[0] ?? '', /Платформа недоступна/);
+    assert.match(failures[0] ?? '', /нужна связь с платформой/);
     assert.equal(seedState(), 'подготовка 1');
   });
 });

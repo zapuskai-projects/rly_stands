@@ -25,6 +25,7 @@ function probeContext(runtime: Runtime, label: string, auth?: PlatformAuth | nul
   return {
     workDir: join(runtime.kitDir, 'work'),
     hostWorkDir: join(runtime.hostDir, 'work'),
+    kitVersion: runtime.version,
     label,
     dataDir: runtime.dataDir,
     results: {},

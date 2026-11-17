@@ -3,6 +3,7 @@ export type ReportSaver = (report: Record<string, string>) => Promise<void>;
 export type ProbeContext = {
   workDir: string;
   hostWorkDir?: string;
+  kitVersion?: string;
   label: string;
   dataDir?: string;
   results?: Record<string, Record<string, unknown>>;

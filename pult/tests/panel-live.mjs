@@ -24,15 +24,14 @@ const action = async (button, name, checked = false) => {
   await modal.getByRole('button', { name, exact: true }).click();
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem('stand-panel.operation')), { timeout: 60000 }).not.toBe(before);
   const id = await page.evaluate(() => sessionStorage.getItem('stand-panel.operation'));
+  let last;
   await expect.poll(async () => {
     try {
-      return await page.evaluate(async (id) => {
-        const operation = await (await fetch('/api/operations/' + id)).json();
-        if (['FAILED', 'INTERRUPTED'].includes(operation.state)) return operation.error?.message ?? operation.stage;
-        return operation.state;
-      }, id);
-    } catch { return 'reconnecting'; }
-  }, { timeout: 300000, intervals: [1000, 2000] }).toBe('SUCCEEDED');
+      last = await page.evaluate(async (id) => (await fetch('/api/operations/' + id)).json(), id);
+      return ['SUCCEEDED', 'FAILED', 'INTERRUPTED', 'CANCELLED', 'WAITING_CONFIRMATION'].includes(last.state);
+    } catch { return false; }
+  }, { timeout: 300000, intervals: [1000, 2000] }).toBe(true);
+  assert.equal(last.state, 'SUCCEEDED', JSON.stringify(last, null, 2));
   return id;
 };
 const stand = (title) => page.locator('section.card').filter({ has: page.getByRole('heading', { name: title, exact: true }) });

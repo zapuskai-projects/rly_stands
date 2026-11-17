@@ -88,6 +88,7 @@ export function renderOutcome(title: string, outcome: CheckOutcome): string[] {
     else if (item.passed) lines.push(color.green(`✓ ${item.title}`));
     else {
       lines.push(color.red(`✗ ${item.title}`));
+      if (item.detail) lines.push(color.dim(`  ${item.detail}`));
       if (item.hint) lines.push(color.dim(`  Подсказка: ${item.hint}`));
     }
   }

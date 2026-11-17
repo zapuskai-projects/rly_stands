@@ -198,6 +198,8 @@ liveSuite('data', READINESS.clickhouse ?? [], 'ClickHouse: проверки на
     });
     const table = await probe<Facts>('clickhouse.table', { name: 'live_events' });
     assert.equal(table.exists, true);
+    assert.equal(table.database, 'student');
+    assert.equal(table.name, 'live_events');
     assert.equal(table.engine, 'MergeTree');
     assert.equal(table.sortingKey, 'user_id, ts');
     assert.equal(table.partitionKey, 'toYYYYMM(ts)');
@@ -230,6 +232,11 @@ liveSuite('data', READINESS.clickhouse ?? [], 'ClickHouse: проверки на
     write('events.sql', 'SELECT action FROM live_events WHERE user_id = 2 ORDER BY ts;');
     const fromFile = await probe<Facts>('clickhouse.queryFile', { file: 'events.sql' });
     assert.deepEqual(fromFile.rows, [{ action: 'view' }, { action: 'click' }]);
+    assert.deepEqual(fromFile.columns, ['action']);
+    assert.equal(fromFile.file.exists, true);
+    assert.equal(fromFile.file.isFile, true);
+    assert.equal(fromFile.file.path, 'events.sql');
+    assert.match(fromFile.file.sha256, /^[a-f0-9]{64}$/);
     assert.match((await probe<Facts>('clickhouse.queryFile', { file: 'absent.sql' })).queryError, /absent\.sql/);
     write('empty.sql', '  \n');
     assert.match((await probe<Facts>('clickhouse.queryFile', { file: 'empty.sql' })).queryError, /пуст/);

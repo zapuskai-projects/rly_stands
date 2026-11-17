@@ -1,7 +1,8 @@
 import { tablesToDrop } from './clickhouse-drop';
 import { asArray, asRecord, failure, http, num, str } from './http';
 import { executor, type ExecutorTable } from './types';
-import { readWorkText } from './work';
+import { missingFile, richTextProblem } from './work';
+import { readWorkFile } from './work-file';
 
 const MODULE = 'ClickHouse';
 const BASE = 'http://clickhouse:8123';
@@ -58,12 +59,15 @@ export function queryErrorOf(text: string): string | null {
 
 async function readRows(sql: string) {
   const result = await execute(sql.replace(/;\s*$/, ''), { readonly: 1, max_execution_time: 10, max_result_rows: 100_000, result_overflow_mode: 'break' });
+  if (result.status === 401) throw failure(MODULE, 'доступ', result);
   if (result.status >= 500 && !EXCEPTION.test(result.text)) throw failure(MODULE, 'запрос', result);
-  if (!result.ok) {
-    return { rowCount: 0, rows: [], queryError: queryErrorOf(result.text) ?? 'запрос не принят' };
+  const exception = asRecord(result.json).exception;
+  if (!result.ok || (typeof exception === 'string' && exception.trim())) {
+    return { rowCount: 0, rows: [], columns: [], queryError: queryErrorOf(typeof exception === 'string' ? exception : result.text) ?? 'запрос не принят' };
   }
   const rows = asArray(asRecord(result.json).data);
-  return { rowCount: rows.length, rows: rows.slice(0, MAX_ROWS), queryError: null };
+  const columns = asArray(asRecord(result.json).meta).map((column) => str(asRecord(column).name));
+  return { rowCount: rows.length, rows: rows.slice(0, MAX_ROWS), columns, queryError: null };
 }
 
 async function scalar(sql: string): Promise<unknown> {
@@ -89,14 +93,17 @@ export const CLICKHOUSE_EXECUTORS: ExecutorTable = {
     if (!tables.ok) throw failure(MODULE, 'чтение таблицы', tables);
     const table = asRecord(asArray(asRecord(tables.json).data)[0]);
     if (!Object.keys(table).length) {
-      return { exists: false, engine: null, sortingKey: '', partitionKey: '', ttl: null, columns: [], rows: 0 };
+      return { exists: false, database, name, engine: null, sortingKey: '', partitionKey: '', ttl: null, columns: [], rows: 0 };
     }
     const columns = await execute(
       `SELECT name, type FROM system.columns WHERE database = ${literal(database)} AND table = ${literal(name)} ORDER BY position`,
     );
+    if (!columns.ok) throw failure(MODULE, 'чтение колонок', columns);
     const rows = await scalar(`SELECT count() FROM \`${database}\`.\`${name}\``);
     return {
       exists: true,
+      database,
+      name,
       engine: str(table.engine),
       sortingKey: str(table.sorting_key),
       partitionKey: str(table.partition_key),
@@ -109,10 +116,14 @@ export const CLICKHOUSE_EXECUTORS: ExecutorTable = {
   'clickhouse.query': executor<{ sql: string }>(({ sql }) => readRows(sql)),
 
   'clickhouse.queryFile': executor<{ file: string }>(async ({ file }, ctx) => {
-    const text = readWorkText(ctx, file);
-    if (text === null) return { rowCount: 0, rows: [], queryError: `файла work/${file} нет` };
-    if (!text.trim()) return { rowCount: 0, rows: [], queryError: `файл work/${file} пуст` };
-    return readRows(text);
+    const snapshot = readWorkFile(ctx, file);
+    const empty = { rowCount: 0, rows: [], columns: [], file: snapshot.file };
+    if (snapshot.file.exists && !snapshot.file.isFile) return { ...empty, queryError: `work/${file} — не обычный файл; сохраните SQL в текстовый файл` };
+    if (snapshot.text === null) return { ...empty, queryError: missingFile(file, ctx) };
+    if (!snapshot.text.trim()) return { ...empty, queryError: `файл work/${file} пуст` };
+    const problem = richTextProblem(snapshot.text, file);
+    if (problem) return { ...empty, queryError: problem };
+    return { ...await readRows(snapshot.text), file: snapshot.file };
   }),
 
   'clickhouse.sql': executor<{ sql: string }>(async ({ sql }) => {

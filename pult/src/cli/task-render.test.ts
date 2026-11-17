@@ -62,6 +62,13 @@ describe('renderOutcome', () => {
     assert.ok(!broken.some((row) => row.includes('не зачтено')));
   });
 
+  it('показывает точную причину незачёта, которую автоматически сохранила платформа', () => {
+    const checked = outcome();
+    checked.result.assertionResults[1]!.detail = 'work/antifraud-report.sql: файл найден. Unknown table student.antifraud_decisions';
+    const text = renderOutcome('Отчёт для антифрода', checked).map(stripAnsi);
+    assert.ok(text.some((row) => row.includes('файл найден. Unknown table student.antifraud_decisions')));
+  });
+
   it('сбой проверки моделью не отправляет проверять стенды', () => {
     const text = renderOutcome(
       'Т',
