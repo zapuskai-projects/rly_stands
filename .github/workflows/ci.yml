@@ -75,28 +75,36 @@ jobs:
             --profile linux --profile bank config --quiet
 
   images:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
-      - name: Образ пульта собирается под обе архитектуры
+      - name: Образ пульта для ${{ matrix.arch }}
         uses: docker/build-push-action@v6
         with:
           context: pult
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/${{ matrix.arch }}
           push: false
-      - name: Образ linux-сервера собирается под обе архитектуры
+      - name: Образ linux-сервера для ${{ matrix.arch }}
         uses: docker/build-push-action@v6
         with:
           context: images/linux-server
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/${{ matrix.arch }}
           push: false
-      - name: Образ банка собирается под обе архитектуры
+      - name: Образ банка для ${{ matrix.arch }}
         uses: docker/build-push-action@v6
         with:
           context: bank
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/${{ matrix.arch }}
           push: false
 
   bank:
