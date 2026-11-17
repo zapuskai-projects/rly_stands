@@ -107,6 +107,26 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           push: false
 
+  clickhouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверка решения из default и student на настоящем ClickHouse
+        run: |
+          docker network create kit-clickhouse-test
+          docker run -d --name clickhouse --network kit-clickhouse-test \
+            -e CLICKHOUSE_DB=student -e CLICKHOUSE_USER=student -e CLICKHOUSE_PASSWORD=student \
+            clickhouse/clickhouse-server:24.8.14.39
+          docker build --target live -t kit-clickhouse-probes pult
+          docker run --rm --network kit-clickhouse-test -e KIT_LIVE=data \
+            kit-clickhouse-probes --test-concurrency=1 src/testing/live/clickhouse-database.live.ts
+      - name: Остановить тестовый ClickHouse
+        if: always()
+        run: |
+          docker rm -f clickhouse || true
+          docker network rm kit-clickhouse-test || true
+
   bank:
     runs-on: ubuntu-latest
     services:
@@ -153,7 +173,7 @@ jobs:
 
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [pult, panel, compose, images, bank]
+    needs: [pult, panel, compose, images, bank, clickhouse]
     permissions:
       contents: write
       packages: write

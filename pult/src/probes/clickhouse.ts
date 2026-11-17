@@ -57,17 +57,30 @@ export function queryErrorOf(text: string): string | null {
   return first ? first.trim().slice(0, 300) : null;
 }
 
-async function readRows(sql: string) {
-  const result = await execute(sql.replace(/;\s*$/, ''), { readonly: 1, max_execution_time: 10, max_result_rows: 100_000, result_overflow_mode: 'break' });
+async function readRowsIn(sql: string, database: string) {
+  const result = await execute(sql.replace(/;\s*$/, ''), { database, readonly: 1, max_execution_time: 10, max_result_rows: 100_000, result_overflow_mode: 'break' });
   if (result.status === 401) throw failure(MODULE, 'доступ', result);
   if (result.status >= 500 && !EXCEPTION.test(result.text)) throw failure(MODULE, 'запрос', result);
   const exception = asRecord(result.json).exception;
   if (!result.ok || (typeof exception === 'string' && exception.trim())) {
-    return { rowCount: 0, rows: [], columns: [], queryError: queryErrorOf(typeof exception === 'string' ? exception : result.text) ?? 'запрос не принят' };
+    const error = typeof exception === 'string' ? exception : result.text;
+    return {
+      missingTable: /\bUNKNOWN_TABLE\b|\bCode:\s*60\b/.test(error),
+      facts: { database, rowCount: 0, rows: [], columns: [], queryError: queryErrorOf(error) ?? 'запрос не принят' },
+    };
   }
   const rows = asArray(asRecord(result.json).data);
   const columns = asArray(asRecord(result.json).meta).map((column) => str(asRecord(column).name));
-  return { rowCount: rows.length, rows: rows.slice(0, MAX_ROWS), columns, queryError: null };
+  return { missingTable: false, facts: { database, rowCount: rows.length, rows: rows.slice(0, MAX_ROWS), columns, queryError: null } };
+}
+
+async function readRows(sql: string) {
+  const first = await readRowsIn(sql, DATABASE);
+  if (!first.missingTable) return first.facts;
+  const fallback = await readRowsIn(sql, 'default');
+  return fallback.missingTable
+    ? { ...first.facts, searchedDatabases: [DATABASE, 'default'] }
+    : fallback.facts;
 }
 
 async function scalar(sql: string): Promise<unknown> {
@@ -86,14 +99,15 @@ function ttlOf(createQuery: string): string | null {
 
 export const CLICKHOUSE_EXECUTORS: ExecutorTable = {
   'clickhouse.table': executor<{ db?: string; name: string }>(async ({ db, name }) => {
-    const database = db ?? DATABASE;
+    const databases = db === undefined ? [DATABASE, 'default'] : [db];
     const tables = await execute(
-      `SELECT engine, sorting_key, partition_key, create_table_query FROM system.tables WHERE database = ${literal(database)} AND name = ${literal(name)}`,
+      `SELECT database, engine, sorting_key, partition_key, create_table_query FROM system.tables WHERE database IN (${databases.map(literal).join(', ')}) AND name = ${literal(name)} ORDER BY database = ${literal(DATABASE)} DESC LIMIT 1`,
     );
     if (!tables.ok) throw failure(MODULE, 'чтение таблицы', tables);
     const table = asRecord(asArray(asRecord(tables.json).data)[0]);
+    const database = str(table.database) || db || DATABASE;
     if (!Object.keys(table).length) {
-      return { exists: false, database, name, engine: null, sortingKey: '', partitionKey: '', ttl: null, columns: [], rows: 0 };
+      return { exists: false, database, searchedDatabases: databases, name, engine: null, sortingKey: '', partitionKey: '', ttl: null, columns: [], rows: 0 };
     }
     const columns = await execute(
       `SELECT name, type FROM system.columns WHERE database = ${literal(database)} AND table = ${literal(name)} ORDER BY position`,

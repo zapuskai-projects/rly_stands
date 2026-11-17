@@ -51,7 +51,7 @@ it('сохраняет метаданные именно выполненног�
     assert.equal(failed.file.size, Buffer.byteLength('SELECT * FROM missing;'));
     assert.match(failed.file.sha256, /^[a-f0-9]{64}$/);
     assert.match(failed.queryError, /Unknown table student.missing/);
-    assert.equal(calls, 1);
+    assert.equal(calls, 2);
     mock.restoreAll();
     mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ data: [], exception: 'Code: 60. DB::Exception: Late query error' }), { status: 200 }));
     assert.match((await executor({ file: 'report.sql' }, ctx) as { queryError: string }).queryError, /Late query error/);
