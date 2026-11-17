@@ -18,6 +18,12 @@ let revision = '';
 let polling: Promise<void> | null = null;
 let authenticated = false;
 let retryAt = 0;
+let renderedView = '';
+
+function disclosureKey(node: HTMLDetailsElement): string {
+  return JSON.stringify([node.closest('section.card')?.querySelector(':scope > h2')?.textContent,
+    node.querySelector(':scope > summary')?.textContent]);
+}
 
 function updateSidebar(s: Snapshot) {
   const list = element('div', 'task-list');
@@ -31,6 +37,11 @@ function updateSidebar(s: Snapshot) {
 
 async function render() {
   if (!snapshot) return;
+  const view = JSON.stringify([tab, tab === 'task' ? selected : '']);
+  const disclosures = renderedView === view
+    ? new Map([...content.querySelectorAll('details')].map((node) => [disclosureKey(node), node.open]))
+    : new Map<string, boolean>();
+  renderedView = view;
   const area = element('div', 'stack');
   area.setAttribute('aria-busy', 'true');
   content.replaceChildren(area);
@@ -42,7 +53,13 @@ async function render() {
     else area.append(taskView(snapshot, snapshot.tasks.find((t) => t.id === selected)));
   } catch (error) {
     area.replaceChildren(muted(error instanceof Error ? error.message : String(error)), button('Повторить', render));
-  } finally { area.removeAttribute('aria-busy'); }
+  } finally {
+    for (const node of area.querySelectorAll('details')) {
+      const opened = disclosures.get(disclosureKey(node));
+      if (opened !== undefined) node.open = opened;
+    }
+    area.removeAttribute('aria-busy');
+  }
 }
 
 async function selectTab(next: Tab) {
@@ -114,4 +131,3 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) void
 content.replaceChildren(row(element('div', 'skeleton'), muted('Проверяем состояние пульта…')));
 void refresh();
 setInterval(() => { if (!document.hidden) void refresh(); }, 2000);
-
