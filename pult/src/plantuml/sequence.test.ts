@@ -113,6 +113,14 @@ end`);
     }
   });
 
+  it('цветные асинхронные стрелки сохраняют направление и асинхронность', () => {
+    const parsed = parseSequence('A -[#blue]>> B: событие\nA <<[#00AEEF]-- B: итог');
+    assert.deepEqual(parsed.messages.map(({ from, to, label, async, reply }) => [from, to, label, async, reply]), [
+      ['A', 'B', 'событие', true, false],
+      ['B', 'A', 'итог', true, true],
+    ]);
+  });
+
   it('удалённое и переставленное сообщение меняет последовательность', () => {
     const source = 'A -[#blue]> B: запрос\nB --[#blue]> A: ответ';
     const messages = (text: string) => parseSequence(text).messages.map((m) => [m.from, m.to, m.label]);
