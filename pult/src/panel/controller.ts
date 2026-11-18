@@ -4,7 +4,7 @@ import type { Runtime } from '../config';
 import { executeAction, inspectActionPlan } from '../actions/dispatcher';
 import { refreshPlatform } from '../actions/session';
 import type { ActionContext, ActionPlan, ActionRequest, ActionResult } from '../actions/types';
-import { readBankSecret, readConfig } from '../store/stores';
+import { readBankSecret, readConfig, readCurrentTask } from '../store/stores';
 import { digest, secret } from './durable';
 import { PanelError } from './errors';
 import { cachedContext, observe, stateRevision } from './snapshot';
@@ -154,11 +154,14 @@ export class Controller {
     this.assertHealthy(); this.policyRunning = true;
     try { await this.deps.execute(this.context(), { action: 'policy.enforce' }); } finally { this.policyRunning = false; }
   }
-  async ensureStarted(): Promise<void> {
-    if (this.store.state.startupDone || !cachedContext(this.runtime) || this.active()) return;
-    this.store.commit((state) => { state.startupDone = true; });
+  async ensureStarted(resumeActive = false): Promise<void> {
+    if (!cachedContext(this.runtime) || this.active()) return;
+    const current = readCurrentTask(this.runtime.dataDir);
+    if (current ? !resumeActive : this.store.state.startupDone) return;
     await this.control(async () => {
-      const plan = await this.plan({ action: 'project.ensureStarted' }, `startup-${secret()}`);
+      const request: ActionRequest = current ? { action: 'task.resume', labId: current.labId } : { action: 'project.ensureStarted' };
+      if (!current) this.store.commit((state) => { state.startupDone = true; });
+      const plan = await this.plan(request, `startup-${secret()}`);
       if (plan.allowed) await this.submit(plan.planId);
     });
   }

@@ -8,7 +8,7 @@ const [kit, evidence] = process.argv.slice(2);
 if (!kit || !evidence) throw Error('Нужны временная тестовая папка набора и каталог результатов');
 mkdirSync(evidence, { recursive: true });
 const browser = await chromium.launch();
-const page = await browser.newPage();
+let page = await browser.newPage();
 page.setDefaultTimeout(45000);
 const host = 'http://127.0.0.1:18490';
 const probe = (name, params) => {
@@ -38,9 +38,10 @@ const action = async (button, name, checked = false) => {
   return id;
 };
 const stand = (title) => page.locator('section.card').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
+const bootstrapUrl = () => host + '/#bootstrap=' + execFileSync('docker', ['exec', 'stands-kit-panel', 'node', '/app/dist/main.js', 'panel', 'bootstrap'], { encoding: 'utf8' }).trim();
+const stop = (...names) => execFileSync('docker', ['stop', ...names], { stdio: 'ignore' });
 try {
-  const nonce = execFileSync('docker', ['exec', 'stands-kit-panel', 'node', '/app/dist/main.js', 'panel', 'bootstrap'], { encoding: 'utf8' }).trim();
-  await page.goto(host + '/#bootstrap=' + nonce);
+  await page.goto(bootstrapUrl());
   await expect(page.getByRole('heading', { name: 'Задание', exact: true })).toBeVisible();
   await nav('Подключение');
   await page.getByRole('button', { name: 'Подключить', exact: true }).click();
@@ -59,6 +60,7 @@ try {
   await action(page.getByRole('button', { name: 'Подготовить задание', exact: true }), 'Подготовить задание');
   const id = probe('bank.transfer', { phone: '+79001110001', toPhone: '+79001110002', amountKop: 100, idempotencyKey: 'panel-live' }).operationId;
   assert.ok(id);
+  probe('clickhouse.sql', { sql: 'CREATE TABLE default.panel_resume (id UInt64) ENGINE = MergeTree ORDER BY id; INSERT INTO default.panel_resume VALUES (7)' });
   probe('rabbitmq.importDefinitions', { definitions: { queues: [{ name: 'panel.live', vhost: '/', durable: true, auto_delete: false, arguments: {} }] } });
   assert.equal(probe('rabbitmq.publish', { exchange: '', routingKey: 'panel.live', payload: 'panel-live' }).routed, true);
   const mailbox = () => probe('rabbitmq.queue', { name: 'panel.live' }).messages;
@@ -70,6 +72,7 @@ try {
   const verify = async () => {
     assert.equal(readFileSync(join(kit, 'work/transfer.yaml'), 'utf8'), 'amount: 101');
     assert.equal(probe('bank.operation', { id }).exists, true);
+    assert.deepEqual(probe('clickhouse.query', { sql: 'SELECT id FROM default.panel_resume' }).rows, [{ id: 7 }]);
     await expect.poll(mailbox, { timeout: 30000 }).toBe(1);
   };
   await nav('Стенды');
@@ -77,8 +80,22 @@ try {
     await action(stand(title).getByRole('button', { name: 'Перезапустить', exact: true }), 'Перезапустить');
     await verify();
   }
+  stop('stands-kit-bank-core', 'stands-kit-bank-antifraud', 'stands-kit-bank-sbp', 'stands-kit-akhq', 'stands-kit-redpanda', 'stands-kit-clickhouse');
+  await page.close();
+  page = await browser.newPage();
+  page.setDefaultTimeout(45000);
+  await page.goto(bootstrapUrl());
+  await expect.poll(async () => {
+    try {
+      const operation = await page.evaluate(async () => (await (await fetch('/api/operations')).json()).operations.find((item) => item.action.action === 'task.resume'));
+      return operation?.state;
+    } catch { return undefined; }
+  }, { timeout: 300000 }).toBe('SUCCEEDED');
+  await verify();
+  stop('stands-kit-bank-core', 'stands-kit-clickhouse');
   await nav('Задание');
   await action(page.getByRole('button', { name: 'Проверить решение', exact: true }), 'Проверить решение');
+  await verify();
   const oldScript = await page.locator('script[type=module]').getAttribute('src');
   await nav('Подключение');
   await action(page.getByRole('button', { name: 'Обновить пульт', exact: true }), 'Обновить пульт');

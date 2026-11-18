@@ -14,6 +14,7 @@ export type ActionRequest =
   | { [K in UntargetedAction]: { action: K } }[UntargetedAction]
   | { action: 'task.start' | 'task.restart'; selector: string }
   | { action: 'task.check'; labId?: string }
+  | { action: 'task.resume'; labId: string }
   | { action: 'task.verify'; selector: string; yes: boolean; reset: boolean }
   | { action: 'update.prepare'; version: string }
   | { action: 'update.complete' };

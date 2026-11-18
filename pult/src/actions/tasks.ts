@@ -14,6 +14,7 @@ import type { ProbeContext } from '../probes/types';
 import { readConfig, readCurrentTask, writeCurrentTask, type CurrentTask } from '../store/stores';
 import { color } from '../util/out';
 import { findTask, taskName } from '../cli/task-render';
+import { resumeTaskModules } from './task-environment';
 
 function authOf(runtime: Runtime): PlatformAuth | null {
   const config = readConfig(runtime.dataDir);
@@ -174,18 +175,21 @@ export async function startTaskFlow(
   return true;
 }
 
-export async function checkFlow(runtime: Runtime, progress: Progress, beforeStep?: () => Promise<void>): Promise<CheckOutcome | null> {
-  const current = readCurrentTask(runtime.dataDir);
-  if (!current) {
-    progress.fail('Текущей задачи нет. Выберите: ./stand tasks, затем ./stand task start <номер>');
-    return null;
-  }
+export async function checkFlow(runtime: Runtime, session: Session, current: CurrentTask, progress: Progress, beforeStep?: () => Promise<void>): Promise<CheckOutcome | null> {
   const auth = authOf(runtime);
   if (!auth) {
     progress.fail('Токен не задан. Выполните: ./stand login');
     return null;
   }
-  if (current.modules.some((module) => module.key === 'kit-bank')) {
+  await beforeStep?.();
+  const fresh = await currentProbes(auth, current.attemptId);
+  if ('error' in fresh) {
+    progress.fail(fresh.error);
+    return null;
+  }
+  if (!(await resumeTaskModules(runtime, session, current, progress, beforeStep))) return null;
+  const bank = session.modules.find((module) => module.profile === 'bank');
+  if (bank && current.modules.some((module) => module.key === bank.key)) {
     try {
       if (await fetchScenarioLabel(probeContext(runtime, current.label)) !== current.label) {
         progress.fail('Окружение банка не соответствует текущей задаче. Проверка не отправлена. Запустите задачу снова, чтобы проверить окружение.');
@@ -197,11 +201,6 @@ export async function checkFlow(runtime: Runtime, progress: Progress, beforeStep
     }
   }
   await beforeStep?.();
-  const fresh = await currentProbes(auth, current.attemptId);
-  if ('error' in fresh) {
-    progress.fail(fresh.error);
-    return null;
-  }
   progress.info(`Собираю факты: ${current.title}`);
   const observations = await collectObservations(fresh.probes, probeContext(runtime, current.label), (step) =>
     stepLine(progress, step),

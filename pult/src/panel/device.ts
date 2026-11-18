@@ -44,7 +44,7 @@ export class DeviceLogins {
         if (session.ok) {
           rememberLogin(controller.runtime, record.token, session.session);
           controller.store.commit((state) => { state.devices[id]!.status = 'APPROVED'; state.devices[id]!.token = ''; });
-          setImmediate(() => { void controller.ensureStarted().catch(() => undefined); });
+          setImmediate(() => { void controller.ensureStarted(true).catch(() => undefined); });
         } else controller.store.commit((state) => { state.devices[id]!.message = session.message; });
       } else if (status.value !== 'PENDING') controller.store.commit((state) => { state.devices[id]!.status = status.value; state.devices[id]!.token = ''; });
       record = controller.store.state.devices[id]!;

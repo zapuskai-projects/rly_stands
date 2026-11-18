@@ -10,6 +10,7 @@ import { restartPreservingData, startAssigned, stopAllOwn, stopAssigned } from '
 import { actionModules, planAction } from './policy';
 import { startProjectFlow } from './project';
 import { logoutPlatform, refreshPlatform } from './session';
+import { resumeTaskModules } from './task-environment';
 import { checkFlow, startTaskFlow, verifyFlow } from './tasks';
 import { defaultPrepareDeps, prepareUpdate } from './update';
 import { reconcileAfterUpdate } from './update-complete';
@@ -53,7 +54,9 @@ export async function executeAction(context: ActionContext, request: ActionReque
     await ctx.beforeStep();
     if (!plan.confirmationRequired) for (const text of plan.consequences) ctx.progress.info(text);
     const { runtime, session, progress } = ctx;
-    const modules = session ? actionModules(request, session) : [];
+    const activeTaskAction = request.action === 'task.check' || request.action === 'task.resume';
+    const current = activeTaskAction ? readCurrentTask(runtime.dataDir) : null;
+    const modules = session ? actionModules(request, session, current) : [];
     if (request.action === 'module.start') return { ok: await startAssigned(ctx, modules) };
     if (request.action === 'modules.stopAll') return { ok: await stopAllOwn(ctx) };
     if (request.action === 'module.stop') return { ok: await stopAssigned(ctx, modules) };
@@ -63,19 +66,15 @@ export async function executeAction(context: ActionContext, request: ActionReque
       const project = await startProjectFlow(runtime, session!, progress, { ask: ctx.ask, showTask: ctx.showTask, say: ctx.say, open: ctx.open, beforeStep: ctx.beforeStep });
       return { ok: project.code === 0, project };
     }
-    if (request.action === 'task.start' || request.action === 'task.restart' || request.action === 'task.verify' || request.action === 'task.check') {
-      const taskModules = request.action === 'task.check'
-        ? session?.modules.filter((module) => readCurrentTask(runtime.dataDir)?.modules.some((item) => item.key === module.key)) ?? []
-        : modules;
+    if (request.action === 'task.check' || request.action === 'task.resume' ||
+      request.action === 'task.start' || request.action === 'task.restart' || request.action === 'task.verify') {
       if (session) {
-        const refusal = await compatibilityRefusal(runtime, session, taskModules);
+        const refusal = await compatibilityRefusal(runtime, session, modules);
         if (refusal) { progress.fail(refusal); return { ok: false, code: 'PENDING_MIGRATION', message: refusal }; }
       }
+      if (request.action === 'task.resume') return { ok: await resumeTaskModules(runtime, session!, current!, progress, ctx.beforeStep) };
       if (request.action === 'task.check') {
-        const current = readCurrentTask(runtime.dataDir);
-        if (request.labId && current?.labId !== request.labId) return { ok: false, code: 'TASK_CHANGED', message: 'Активное задание изменилось. Обновите список.' };
-        if (current && !session?.tasks.some((task) => task.id === current.labId)) return { ok: false, code: 'TASK_UNAVAILABLE', message: 'Текущая задача больше не назначена' };
-        const check = await checkFlow(runtime, progress, ctx.beforeStep);
+        const check = await checkFlow(runtime, session!, current!, progress, ctx.beforeStep);
         return { ok: check?.status === 'PASSED', check };
       }
       if (request.action === 'task.verify') return { ok: await verifyFlow(runtime, session!, request.selector, { ...request, ask: ctx.ask, beforeStep: ctx.beforeStep }, progress) };

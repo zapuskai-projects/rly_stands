@@ -56,7 +56,9 @@ export class Router {
         const body = requireObject(await bodyOf(req), ['nonce']);
         const session = bootstrap(this.controller.store, stringField(body.nonce), req.headers.cookie);
         res.setHeader('Set-Cookie', `stand_session=${session.id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`);
-        json(res, 200, { csrfToken: session.csrf, expiresAt: new Date(session.expiresAt).toISOString() }); return;
+        json(res, 200, { csrfToken: session.csrf, expiresAt: new Date(session.expiresAt).toISOString() });
+        void this.controller.ensureStarted(true).catch(() => undefined);
+        return;
       }
       if (!path.startsWith('/api/')) { if (mutation) throw new PanelError(405, 'METHOD_DENIED', 'Метод не разрешён'); this.static(res, path); return; }
       const session = browserSession(this.controller.store, req, mutation);

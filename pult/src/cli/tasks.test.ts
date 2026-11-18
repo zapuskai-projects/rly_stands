@@ -298,21 +298,14 @@ describe('начать текущую задачу заново', () => {
     });
   }
 
-  it('check не отправляет факты для чужого сценария или недоступного банка', async () => {
+  it('check блокирует запуск банка, если его сняли с назначений', async () => {
     prepareBank();
     await quietly(() => startTaskFlow(runtime(), session, task.id, recorder().progress));
     const current = readCurrentTask(join(root, 'data'))!;
     writeCurrentTask(join(root, 'data'), { ...current, modules: [{ key: 'kit-bank', title: 'Банк' }] });
-    for (const label of [null, 'another-attempt']) {
-      bankLabel = label;
-      const { progress, failures } = recorder();
-      assert.equal(await checkFlow(runtime(), progress, session), null);
-      assert.match(failures[0]!, /Проверка не отправлена/);
-    }
-    bankStatus = 404;
     const { progress, failures } = recorder();
     assert.equal(await checkFlow(runtime(), progress, session), null);
-    assert.match(failures[0]!, /Проверка не отправлена/);
+    assert.match(failures[0]!, /Банк.*отсутствует в назначениях/);
     assert.equal(resets, 0);
   });
 

@@ -4,7 +4,7 @@ import { compatibilityRefusal } from '../modules/compatibility';
 import { checkMemory, memoryRefusal } from '../modules/memory';
 import type { SessionModule } from '../platform/types';
 import { stopAllTargets } from './modules';
-import { actionModules, planAction } from './policy';
+import { planAction } from './policy';
 import type { ActionContext, ActionPlan, ActionRequest } from './types';
 
 export type PreviewDeps = {
@@ -31,15 +31,15 @@ export async function inspectActionPlan(ctx: ActionContext, request: ActionReque
       consequences: ['При замене пульта на короткое время прервётся связь с вкладкой.', ...stale.map((item) =>
         recreatedAutomatically(item) ? `Обновится ${item.wanted.container} до ${item.wanted.image}; тома сохранятся.` : manualUpdateNote(ctx.session!, item)).sort()] };
   }
-  if (!['module.start', 'module.restart', 'project.ensureStarted', 'task.start', 'task.restart', 'task.check'].includes(request.action)) return plan;
+  if (!['module.start', 'module.restart', 'project.ensureStarted', 'task.start', 'task.restart', 'task.check', 'task.resume'].includes(request.action)) return plan;
   const session = ctx.session;
-  const modules = actionModules(request, session);
   const selected = session.modules.filter((module) => plan.targets.includes(module.key));
   try {
-    const refusal = await deps.compatible(modules);
+    const refusal = await deps.compatible(selected);
     if (refusal) return { ...plan, allowed: false, code: 'PENDING_MIGRATION', reason: refusal };
     const containers = await deps.containers();
-    if (request.action === 'task.check') return plan;
+    if ((request.action === 'task.check' || request.action === 'task.resume') &&
+      selected.every((module) => profileState(containers, module.profile) === 'running')) return plan;
     const total = await deps.memory();
     if (total === null) return { ...plan, allowed: false, code: 'DOCKER_UNKNOWN', reason: 'Не удалось определить память Docker; состояние неизвестно' };
     const running = session.modules.filter((module) => profileState(containers, module.profile) !== 'stopped');

@@ -6,7 +6,7 @@ let fingerprint;
 let attempt = false;
 let result = null;
 const expiresAt = new Date(Date.now() + 12 * 3600000).toISOString();
-const modules = ['rabbitmq', 'kafka', 'postgres', 'bank', 'linux'].map((profile) => ({ key: profile, profile, title: profile === 'bank' ? 'Банк' : profile,
+const modules = ['rabbitmq', 'kafka', 'postgres', 'bank', 'linux', 'clickhouse'].map((profile) => ({ key: profile === 'bank' ? 'kit-bank' : profile, profile, title: profile === 'bank' ? 'Банк' : profile,
   requires: profile === 'bank' ? ['rabbitmq', 'kafka', 'postgres'] : [], minMemoryMb: 32, uis: [], allowed: true, reason: null }));
 const probes = [{ id: 'student-file', probe: 'file.exists', params: { path: 'transfer.yaml' } }];
 createServer(async (req, res) => {
@@ -22,7 +22,7 @@ createServer(async (req, res) => {
   if (path === '/device/device') return reply({ status: 'APPROVED' });
   const bearer = req.headers.authorization?.replace(/^Bearer /, '') ?? '';
   if (!fingerprint || createHash('sha256').update(bearer).digest('hex') !== fingerprint) return reply({ message: 'Войдите по коду устройства' }, 401);
-  const task = { id: 'transfer', title: 'Проверка перевода', modules: [{ key: 'bank', title: 'Банк' }], status: result?.passed ? 'PASSED' : attempt ? 'STARTED' : 'NOT_STARTED', attemptId: attempt ? 'attempt' : null, label: attempt ? 'panel105' : null,
+  const task = { id: 'transfer', title: 'Проверка перевода', modules: [{ key: 'kit-bank', title: 'Банк' }, { key: 'clickhouse', title: 'ClickHouse' }], status: result?.passed ? 'PASSED' : attempt ? 'STARTED' : 'NOT_STARTED', attemptId: attempt ? 'attempt' : null, label: attempt ? 'panel105' : null,
     needsUpdate: false, missingPrimitives: [], verifiedOnStand: null, verifiedFailureOnStand: null };
   if (path === '/session') return reply({ user: { name: 'Тестовый ученик' }, token: { expiresAt }, kit: { latestVersion: '0.0.902', minVersion: '0.0.901', offlineGraceHours: 24 }, projects: [], tasks: [task], modules });
   if (path === '/tasks/transfer/state') return reply({ labId: 'transfer', label: task.label, status: task.status, attemptId: task.attemptId, result, modules: task.modules });

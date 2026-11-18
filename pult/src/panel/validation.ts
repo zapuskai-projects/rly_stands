@@ -11,6 +11,7 @@ export function parseAction(value: unknown, internal = false): ActionRequest {
     const id = body.target ?? body.labId;
     return id === undefined ? { action } : { action, labId: stringField(id) };
   }
+  if (action === 'task.resume') return { action, labId: stringField(body.target ?? body.labId) };
   if (internal && action === 'task.verify' && typeof body.yes === 'boolean' && typeof body.reset === 'boolean') return { action, selector: stringField(body.selector), yes: body.yes, reset: body.reset };
   if (['project.ensureStarted', 'modules.stopAll', 'diagnostics.run', 'platform.refresh', 'platform.logout', 'update.complete', ...(internal ? ['policy.enforce'] : [])].includes(action)) return { action } as ActionRequest;
   throw new PanelError(400, 'ACTION_UNAVAILABLE', 'Неизвестное действие');

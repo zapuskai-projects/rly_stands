@@ -138,6 +138,13 @@ async function launchModule(
     progress.fail(`${module.title}: ${composeFailure(output, code)}`);
     return false;
   }
+  if (!(await waitModuleReady(runtime, module, progress))) return false;
+  progress.ok(`${module.title} работает`);
+  for (const ui of module.uis) progress.info(`  ${ui.title}: ${ui.url}`);
+  return true;
+}
+
+export async function waitModuleReady(runtime: Runtime, module: SessionModule, progress: Progress): Promise<boolean> {
   const reports = await waitReady(READINESS[module.profile] ?? [], runtime.kitDir, (report) => {
     if (report.skipped) progress.info(`  ${report.label} ждёт файл ${report.skipped}`);
     else if (report.ok) progress.ok(`  ${report.label} отвечает (${report.seconds} с)`);
@@ -147,8 +154,6 @@ async function launchModule(
     progress.fail(`${module.title}: запущен не полностью, подробности — docker logs`);
     return false;
   }
-  progress.ok(`${module.title} работает`);
-  for (const ui of module.uis) progress.info(`  ${ui.title}: ${ui.url}`);
   return true;
 }
 
