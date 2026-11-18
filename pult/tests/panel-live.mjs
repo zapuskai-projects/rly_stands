@@ -18,7 +18,19 @@ const probe = (name, params) => {
 const nav = (name) => page.getByRole('navigation').getByRole('button', { name, exact: true }).click();
 const action = async (button, name, checked = false) => {
   const before = await page.evaluate(() => sessionStorage.getItem('stand-panel.operation'));
-  await button.click();
+  for (let attempt = 0; ; attempt += 1) {
+    const [response] = await Promise.all([
+      page.waitForResponse((item) => item.url() === host + '/api/plans' && item.request().method() === 'POST'),
+      button.click(),
+    ]);
+    const plan = await response.json();
+    if (response.ok() && plan.allowed) break;
+    if (plan.error?.code === 'OPERATION_CONFLICT' && attempt < 2) {
+      await expect.poll(async () => page.evaluate(async () => (await (await fetch('/api/state')).json()).queue?.length)).toBe(0);
+      continue;
+    }
+    assert.fail(`${name}: ${response.status()} ${plan.error?.message ?? plan.reason ?? 'план недоступен'}`);
+  }
   const modal = page.getByRole('dialog');
   if (checked) await modal.getByRole('checkbox').check();
   await modal.getByRole('button', { name, exact: true }).click();
@@ -104,7 +116,7 @@ try {
   assert.equal(linuxContainer(), linuxId);
   assert.equal(execFileSync('docker', ['exec', 'stands-kit-linux-server', 'cat', '/home/student/panel-proof'], { encoding: 'utf8' }), 'preserved');
   await nav('Стенды');
-  await linux.getByRole('button', { name: 'Перезапустить', exact: true }).click();
+  await stand('linux').getByRole('button', { name: 'Перезапустить', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: /перенос|миграци|образ/i }).first()).toBeVisible();
   assert.equal(linuxContainer(), linuxId);
   await nav('Задание');
